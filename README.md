@@ -35,8 +35,6 @@ A Home Assistant custom integration for the **Aquamatrix Waterbeep** water-telem
 
 ### Configuration
 
-> ⚠️ **Note:** This integration is in **early alpha**. Login and the last-7-days chart are wired up; more sensors (meter index in m³, 30-day totals, per-person average, billing history, leak alerts) will be added as their dashboard endpoints are captured. See **[docs/API.md](custom_components/waterbeep/docs/API.md)**.
-
 1. Go to **Settings** → **Devices & Services**
 2. Click **+ Add Integration**
 3. Search for "Waterbeep"
@@ -51,7 +49,7 @@ The integration validates your credentials with a live login before creating the
 Comprehensive documentation is available in the [`docs`](custom_components/waterbeep/docs/) folder:
 
 - **[Architecture](custom_components/waterbeep/docs/ARCHITECTURE.md)**: Technical architecture and data flow
-- **[API](custom_components/waterbeep/docs/API.md)**: The reverse-engineered Waterbeep requests and outstanding TODOs
+- **[API](custom_components/waterbeep/docs/API.md)**: The reverse-engineered Waterbeep requests and verified response shapes
 
 ## 🎯 Entities
 
@@ -80,14 +78,14 @@ automation:
     trigger:
       - platform: numeric_state
         entity_id: sensor.waterbeep_daily_consumption
-        above: 500
+        above: 0.5   # m³ for the last complete day (~500 L)
     action:
       - service: notify.mobile_app
         data:
           title: "High water usage 💧"
           message: >
-            Yesterday's consumption was
-            {{ states('sensor.waterbeep_daily_consumption') }} L.
+            Latest daily consumption was
+            {{ states('sensor.waterbeep_daily_consumption') }} m³.
 ```
 
 ### Daily Water Report
@@ -102,8 +100,8 @@ automation:
         data:
           title: "Water report"
           message: >
-            Yesterday: {{ states('sensor.waterbeep_daily_consumption') }} L ·
-            Last 7 days: {{ states('sensor.waterbeep_7_day_consumption') }} L
+            Latest day: {{ states('sensor.waterbeep_daily_consumption') }} m³ ·
+            Last 7 days: {{ states('sensor.waterbeep_7_day_consumption') }} m³
 ```
 
 ## 🛠️ Technical Details
