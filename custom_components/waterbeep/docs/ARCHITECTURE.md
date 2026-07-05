@@ -84,8 +84,8 @@ persisting the running total plus a date cursor across restarts (see
 ```mermaid
 timeline
     title Twice-daily poll (local time)
-    01:00 : refresh
-    13:00 : refresh
+    01h00 : refresh
+    13h00 : refresh
 ```
 
 `update_interval` is `None` — there is no tight periodic loop. Instead the
