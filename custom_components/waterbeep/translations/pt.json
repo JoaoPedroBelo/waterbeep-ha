@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configuração Waterbeep",
+        "description": "Inicie sessão com a sua conta Waterbeep (Aquamatrix). O seu NIF é o Código de Utilizador da conta. Os dados são atualizados duas vezes por dia (01:00 e 13:00).",
+        "data": {
+          "username": "NIF",
+          "password": "Palavra-passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Código de Utilizador ou Palavra-passe inválidos",
+      "cannot_connect": "Falha ao contactar o serviço Waterbeep",
+      "unknown": "Ocorreu um erro inesperado"
+    },
+    "abort": {
+      "already_configured": "Esta conta Waterbeep já está configurada"
+    }
+  }
+}
