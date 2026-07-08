@@ -1,15 +1,14 @@
-"""Tests for the Waterbeep API client (network-free units)."""
+"""Tests for the Waterbeep API client (network-free units).
 
-from aioresponses import aioresponses
+The 2FA handshake is driven through a lightweight fake session so no real
+``aiohttp`` connector/resolver threads are created (which would trip Home
+Assistant's lingering-thread teardown guard).
+"""
+
 import pytest
 
 from custom_components.waterbeep.api import (
     _TOKEN_RE,
-    BASE_URL,
-    DASHBOARD_LANDING,
-    LOGIN_PATH,
-    SUBMIT_CONTACT_PATH,
-    SUBMIT_OTP_PATH,
     WaterbeepAuthError,
     WaterbeepClient,
     WaterbeepTwoFactorRequired,
@@ -35,6 +34,64 @@ LOGIN_PAGE = (
 DASHBOARD_PAGE = (
     '<input name="__RequestVerificationToken" type="hidden" value="AJAX_TOK" />'
 )
+
+
+class _FakeResponse:
+    """Minimal aiohttp-style response usable as an async context manager."""
+
+    def __init__(
+        self,
+        *,
+        text: str = "",
+        json: dict | None = None,
+        status: int = 200,
+        url: str = "",
+    ) -> None:
+        self._text = text
+        self._json = json
+        self.status = status
+        self.url = url
+        self.headers: dict[str, str] = {}
+
+    async def __aenter__(self) -> "_FakeResponse":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def text(self) -> str:
+        return self._text
+
+    async def json(self, content_type: str | None = None) -> dict:
+        return self._json or {}
+
+    def raise_for_status(self) -> None:
+        if self.status >= 400:
+            raise AssertionError("unexpected error status in test")
+
+
+class _FakeSession:
+    """Serves queued ``_FakeResponse`` objects in call order per HTTP method."""
+
+    def __init__(self, gets: list, posts: list) -> None:
+        self._gets = list(gets)
+        self._posts = list(posts)
+        self.closed = False
+
+    def get(self, url):
+        return self._gets.pop(0)
+
+    def post(self, url, data=None, headers=None):
+        return self._posts.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _client_with(gets: list, posts: list) -> WaterbeepClient:
+    client = WaterbeepClient("12345678", "secret")
+    client._session = _FakeSession(gets, posts)
+    return client
 
 
 class TestTokenRegex:
@@ -90,68 +147,53 @@ class TestTwoFactorParsing:
 
 
 class TestTwoFactorFlow:
-    """End-to-end 2FA handshake against mocked HTTP."""
+    """End-to-end 2FA handshake against a fake session."""
 
     async def test_login_raises_two_factor_with_contacts(self):
-        client = WaterbeepClient("12345678", "secret")
-        with aioresponses() as mocked:
-            mocked.get(f"{BASE_URL}{LOGIN_PATH}", status=200, body=LOGIN_PAGE)
-            mocked.post(f"{BASE_URL}{LOGIN_PATH}", status=200, body=TFA_PAGE)
+        client = _client_with(
+            gets=[_FakeResponse(text=LOGIN_PAGE)],
+            posts=[_FakeResponse(text=TFA_PAGE, url="https://x/Account/TwoFactorAuth")],
+        )
 
-            with pytest.raises(WaterbeepTwoFactorRequired) as excinfo:
-                await client.async_login()
+        with pytest.raises(WaterbeepTwoFactorRequired) as excinfo:
+            await client.async_login()
 
         assert [c["id"] for c in excinfo.value.contacts] == ["email", "phone"]
         assert client._tfa_token == "TFA_TOKEN_123"
         assert client._tfa_entity == "ENTITY_456"
         assert client._logged_in is False
-        await client.close()
 
     async def test_request_and_submit_otp_completes_login(self):
-        client = WaterbeepClient("12345678", "secret")
-        with aioresponses() as mocked:
-            mocked.get(f"{BASE_URL}{LOGIN_PATH}", status=200, body=LOGIN_PAGE)
-            mocked.post(f"{BASE_URL}{LOGIN_PATH}", status=200, body=TFA_PAGE)
-            with pytest.raises(WaterbeepTwoFactorRequired):
-                await client.async_login()
+        client = _client_with(
+            gets=[_FakeResponse(text=LOGIN_PAGE), _FakeResponse(text=DASHBOARD_PAGE)],
+            posts=[
+                _FakeResponse(text=TFA_PAGE, url="https://x/Account/TwoFactorAuth"),
+                _FakeResponse(json={"succeeded": True}),
+                _FakeResponse(json={"succeeded": True, "redirectUrl": "/x"}),
+            ],
+        )
 
-            mocked.post(
-                f"{BASE_URL}{SUBMIT_CONTACT_PATH}",
-                status=200,
-                payload={"succeeded": True},
-            )
-            await client.async_request_otp("PhoneVal")
-
-            mocked.post(
-                f"{BASE_URL}{SUBMIT_OTP_PATH}",
-                status=200,
-                payload={"succeeded": True, "redirectUrl": DASHBOARD_LANDING},
-            )
-            mocked.get(
-                f"{BASE_URL}{DASHBOARD_LANDING}", status=200, body=DASHBOARD_PAGE
-            )
-            await client.async_submit_otp("123456")
+        with pytest.raises(WaterbeepTwoFactorRequired):
+            await client.async_login()
+        await client.async_request_otp("PhoneVal")
+        await client.async_submit_otp("123456")
 
         assert client._logged_in is True
         assert client._token == "AJAX_TOK"
         assert client._tfa_token is None
-        await client.close()
 
     async def test_submit_otp_rejects_bad_code(self):
-        client = WaterbeepClient("12345678", "secret")
-        with aioresponses() as mocked:
-            mocked.get(f"{BASE_URL}{LOGIN_PATH}", status=200, body=LOGIN_PAGE)
-            mocked.post(f"{BASE_URL}{LOGIN_PATH}", status=200, body=TFA_PAGE)
-            with pytest.raises(WaterbeepTwoFactorRequired):
-                await client.async_login()
+        client = _client_with(
+            gets=[_FakeResponse(text=LOGIN_PAGE)],
+            posts=[
+                _FakeResponse(text=TFA_PAGE, url="https://x/Account/TwoFactorAuth"),
+                _FakeResponse(json={"succeeded": False}),
+            ],
+        )
 
-            mocked.post(
-                f"{BASE_URL}{SUBMIT_OTP_PATH}",
-                status=200,
-                payload={"succeeded": False},
-            )
-            with pytest.raises(WaterbeepAuthError):
-                await client.async_submit_otp("000000")
+        with pytest.raises(WaterbeepTwoFactorRequired):
+            await client.async_login()
+        with pytest.raises(WaterbeepAuthError):
+            await client.async_submit_otp("000000")
 
         assert client._logged_in is False
-        await client.close()
