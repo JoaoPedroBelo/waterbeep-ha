@@ -6,11 +6,17 @@ import logging
 from typing import Any
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import WaterbeepAuthError, WaterbeepClient, WaterbeepError
+from .api import (
+    WaterbeepAuthError,
+    WaterbeepClient,
+    WaterbeepError,
+    WaterbeepTwoFactorRequired,
+)
 from .const import (
     CONF_METER_ID,
     CONF_PASSWORD,
@@ -94,9 +100,16 @@ class WaterbeepCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch and normalise the latest data from Waterbeep."""
         try:
             raw = await self.client.async_get_data()
+        except WaterbeepTwoFactorRequired as err:
+            # Waterbeep is challenging with 2FA; trigger HA's reauth flow so the
+            # user can complete the one-time code and re-trust this connection.
+            raise ConfigEntryAuthFailed(
+                "Waterbeep requires two-factor verification"
+            ) from err
         except WaterbeepAuthError as err:
-            # Auth errors are not transient - surface clearly.
-            raise UpdateFailed(f"Authentication failed: {err}") from err
+            # Auth errors are not transient - surface as a reauth so HA prompts
+            # the user rather than retrying forever.
+            raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
         except WaterbeepError as err:
             raise UpdateFailed(f"Error communicating with Waterbeep: {err}") from err
 
