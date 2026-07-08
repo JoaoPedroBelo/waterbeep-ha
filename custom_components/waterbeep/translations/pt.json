@@ -8,15 +8,39 @@
           "username": "NIF",
           "password": "Palavra-passe"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reautenticar Waterbeep",
+        "description": "A Waterbeep precisa de verificar esta ligação novamente para {username}. Confirme a sua palavra-passe para continuar.",
+        "data": {
+          "password": "Palavra-passe"
+        }
+      },
+      "contact": {
+        "title": "Verificação em dois passos",
+        "description": "A Waterbeep precisa de um código de uso único. Escolha para onde deve ser enviado.",
+        "data": {
+          "contact": "Enviar código por"
+        }
+      },
+      "otp": {
+        "title": "Introduzir código de verificação",
+        "description": "Introduza o código de uso único que a Waterbeep acabou de enviar.",
+        "data": {
+          "code": "Código de verificação"
+        }
       }
     },
     "error": {
       "invalid_auth": "Código de Utilizador ou Palavra-passe inválidos",
       "cannot_connect": "Falha ao contactar o serviço Waterbeep",
+      "otp_send_failed": "A Waterbeep não conseguiu enviar o código de verificação",
+      "invalid_otp": "Código de verificação inválido ou expirado",
       "unknown": "Ocorreu um erro inesperado"
     },
     "abort": {
-      "already_configured": "Esta conta Waterbeep já está configurada"
+      "already_configured": "Esta conta Waterbeep já está configurada",
+      "reauth_successful": "Reautenticação efetuada com sucesso"
     }
   }
 }

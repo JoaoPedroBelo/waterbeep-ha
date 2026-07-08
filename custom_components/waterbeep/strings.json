@@ -8,15 +8,39 @@
           "username": "NIF",
           "password": "Password"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Waterbeep",
+        "description": "Waterbeep needs to verify this connection again for {username}. Confirm your password to continue.",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "contact": {
+        "title": "Two-factor verification",
+        "description": "Waterbeep needs a one-time code. Choose where it should be sent.",
+        "data": {
+          "contact": "Send code via"
+        }
+      },
+      "otp": {
+        "title": "Enter verification code",
+        "description": "Enter the one-time code Waterbeep just sent you.",
+        "data": {
+          "code": "Verification code"
+        }
       }
     },
     "error": {
       "invalid_auth": "Invalid User Code or Password",
       "cannot_connect": "Failed to reach the Waterbeep service",
+      "otp_send_failed": "Waterbeep could not send the verification code",
+      "invalid_otp": "Invalid or expired verification code",
       "unknown": "Unexpected error occurred"
     },
     "abort": {
-      "already_configured": "This Waterbeep account is already configured"
+      "already_configured": "This Waterbeep account is already configured",
+      "reauth_successful": "Re-authentication was successful"
     }
   }
 }
