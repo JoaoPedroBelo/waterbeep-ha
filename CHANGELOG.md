@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0]
+
+### Added
+- Two-factor authentication support. Waterbeep now enforces risk-based 2FA: a
+  login from an untrusted IP is challenged with a one-time code (SMS or email).
+  The integration surfaces this through Home Assistant's re-authentication flow —
+  pick a delivery channel, then enter the 6-digit code — and re-trusts the
+  connection so twice-daily polling resumes.
+
+### Changed
+- Authentication and 2FA failures now raise `ConfigEntryAuthFailed`, so Home
+  Assistant prompts for re-authentication instead of retrying silently.
+
+### Fixed
+- Setup no longer crashes with a misleading "no antiforgery token on the landing
+  page" error when Waterbeep challenges the login with 2FA.
+
 ## [0.1.1]
 
 ### Added
