@@ -11,7 +11,7 @@
       },
       "reauth_confirm": {
         "title": "Re-authenticate Waterbeep",
-        "description": "Waterbeep needs to verify this connection again for {username}. Confirm your password to continue.",
+        "description": "The stored password for {username} no longer works. Enter the current Waterbeep password to continue.",
         "data": {
           "password": "Password"
         }

@@ -143,7 +143,7 @@ async def test_otp_invalid_code_shows_error(hass: HomeAssistant) -> None:
 
 
 async def test_reauth_two_factor_flow(hass: HomeAssistant) -> None:
-    """Reauth confirms the password, completes 2FA, and reloads the entry."""
+    """Reauth reuses the stored password and goes straight to the 2FA steps."""
     entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT, unique_id="12345678")
     entry.add_to_hass(hass)
 
@@ -157,22 +157,60 @@ async def test_reauth_two_factor_flow(hass: HomeAssistant) -> None:
         patch(
             "custom_components.waterbeep.config_flow.WaterbeepClient",
             return_value=instance,
-        ),
+        ) as mock_client,
         patch.object(
             hass.config_entries, "async_reload", AsyncMock(return_value=True)
         ) as mock_reload,
     ):
+        # No password prompt: the stored password is tried automatically and
+        # the 2FA challenge routes straight to the contact picker.
         result = await flow.async_step_reauth(dict(entry.data))
         assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "reauth_confirm"
-
-        result = await flow.async_step_reauth_confirm({CONF_PASSWORD: "newpass"})
         assert result["step_id"] == "contact"
+        assert mock_client.call_args.kwargs["password"] == "secret"
 
         result = await flow.async_step_contact({"contact": "PhoneVal"})
         assert result["step_id"] == "otp"
 
         result = await flow.async_step_otp({"code": "123456"})
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    mock_reload.assert_awaited_once_with(entry.entry_id)
+    assert entry.data[CONF_PASSWORD] == "secret"
+
+
+async def test_reauth_asks_password_only_when_rejected(hass: HomeAssistant) -> None:
+    """The password form only appears when the stored password fails."""
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT, unique_id="12345678")
+    entry.add_to_hass(hass)
+
+    flow = ConfigFlow()
+    flow.hass = hass
+    flow.context = {"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id}
+
+    rejected = AsyncMock()
+    rejected.async_login = AsyncMock(side_effect=WaterbeepAuthError("bad"))
+    rejected.close = AsyncMock()
+
+    with (
+        patch(
+            "custom_components.waterbeep.config_flow.WaterbeepClient",
+            return_value=rejected,
+        ),
+        patch.object(
+            hass.config_entries, "async_reload", AsyncMock(return_value=True)
+        ) as mock_reload,
+    ):
+        # Stored password rejected -> password form with the error shown.
+        result = await flow.async_step_reauth(dict(entry.data))
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+        assert result["errors"] == {"base": "invalid_auth"}
+
+        # A working password then completes the reauth (no 2FA challenge).
+        rejected.async_login = AsyncMock()
+        result = await flow.async_step_reauth_confirm({CONF_PASSWORD: "newpass"})
 
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"

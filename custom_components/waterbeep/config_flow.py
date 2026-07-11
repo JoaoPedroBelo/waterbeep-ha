@@ -77,20 +77,41 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
-        """Start re-authentication (typically after a 2FA challenge)."""
+        """Start re-authentication (typically after a 2FA challenge).
+
+        The stored password is normally still valid — a reauth here usually
+        means Waterbeep is challenging with 2FA, not that the password changed.
+        Try the stored credentials first and only ask for the password if the
+        login actually rejects them.
+        """
         self._is_reauth = True
         self._reauth_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
-        return await self.async_step_reauth_confirm()
+        assert self._reauth_entry is not None
+
+        self._creds = {
+            CONF_USERNAME: self._reauth_entry.data[CONF_USERNAME],
+            CONF_PASSWORD: self._reauth_entry.data[CONF_PASSWORD],
+        }
+        errors: dict[str, str] = {}
+        result = await self._attempt_login(errors)
+        if result is not None:
+            # Straight to the 2FA steps (or finished, if no challenge).
+            return result
+        # Stored password rejected or service unreachable - fall back to
+        # asking for the password, surfacing what went wrong.
+        return await self.async_step_reauth_confirm(errors=errors)
 
     async def async_step_reauth_confirm(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None,
+        errors: dict[str, str] | None = None,
     ) -> FlowResult:
-        """Confirm the password and re-run the login (which may trigger 2FA)."""
+        """Ask for the password (only reached when the stored one failed)."""
         assert self._reauth_entry is not None
         username = self._reauth_entry.data[CONF_USERNAME]
-        errors: dict[str, str] = {}
+        errors = errors or {}
 
         if user_input is not None:
             self._creds = {
