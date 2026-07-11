@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1]
+
+### Changed
+- Re-authentication now reuses the stored password automatically and goes
+  straight to the two-factor code step. The password form only appears if the
+  stored password is actually rejected — no more redundant password prompt on a
+  routine 2FA re-verification.
+
 ## [0.2.0]
 
 ### Added
