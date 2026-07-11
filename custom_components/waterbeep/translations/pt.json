@@ -11,7 +11,7 @@
       },
       "reauth_confirm": {
         "title": "Reautenticar Waterbeep",
-        "description": "A Waterbeep precisa de verificar esta ligação novamente para {username}. Confirme a sua palavra-passe para continuar.",
+        "description": "A palavra-passe guardada para {username} já não funciona. Introduza a palavra-passe atual da Waterbeep para continuar.",
         "data": {
           "password": "Palavra-passe"
         }
