@@ -138,9 +138,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None and self._client is not None:
             try:
                 await self._client.async_request_otp(user_input["contact"])
-            except WaterbeepConnectionError:
+            except WaterbeepConnectionError as err:
+                _LOGGER.warning(
+                    "Waterbeep OTP request could not reach service: %s", err
+                )
                 errors["base"] = "cannot_connect"
-            except WaterbeepError:
+            except WaterbeepError as err:
+                _LOGGER.warning("Waterbeep refused to send the OTP: %s", err)
                 errors["base"] = "otp_send_failed"
             else:
                 return await self.async_step_otp()
@@ -166,7 +170,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self._client.async_submit_otp(user_input["code"])
             except WaterbeepAuthError:
                 errors["base"] = "invalid_otp"
-            except WaterbeepError:
+            except WaterbeepError as err:
+                _LOGGER.warning(
+                    "Waterbeep OTP submission could not reach service: %s", err
+                )
                 errors["base"] = "cannot_connect"
             else:
                 await self._reset_client()

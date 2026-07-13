@@ -149,6 +149,10 @@ class WaterbeepClient:
         # 2FA; consumed by async_request_otp / async_submit_otp).
         self._tfa_token: str | None = None
         self._tfa_entity: str | None = None
+        # Antiforgery token scraped from the 2FA page. The SubmitContact/SubmitOTP
+        # endpoints share the site's antiforgery validation, so this must be sent
+        # with those POSTs (verified: omitting it yields HTTP 400).
+        self._tfa_antiforgery: str | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Create the private cookie-backed session on first use."""
@@ -169,6 +173,7 @@ class WaterbeepClient:
         self._token = None
         self._tfa_token = None
         self._tfa_entity = None
+        self._tfa_antiforgery = None
 
     async def _get_verification_token(self, path: str) -> str:
         """GET a page and scrape its ``__RequestVerificationToken``."""
@@ -223,6 +228,10 @@ class WaterbeepClient:
                 )
             self._tfa_token = tfa_token
             self._tfa_entity = tfa_entity
+            # The SubmitContact/SubmitOTP AJAX calls are antiforgery-protected
+            # like the rest of the site; capture the page's token to send with
+            # them (missing it yields HTTP 400).
+            self._tfa_antiforgery = _scrape_hidden(body, "__RequestVerificationToken")
             _LOGGER.debug("Waterbeep requires 2FA for %s", self._user_code)
             raise WaterbeepTwoFactorRequired(contacts)
 
@@ -255,9 +264,20 @@ class WaterbeepClient:
             "X-Requested-With": "XMLHttpRequest",
             "Accept": "*/*",
         }
+        # Mirror the login/dashboard POSTs, which authenticate the antiforgery
+        # token via the request body. Also send it as the header some ASP.NET
+        # Core setups expect; a redundant header is harmless.
+        if self._tfa_antiforgery:
+            payload = {**payload, "__RequestVerificationToken": self._tfa_antiforgery}
+            headers["RequestVerificationToken"] = self._tfa_antiforgery
         url = f"{BASE_URL}{path}"
         try:
             async with session.post(url, data=payload, headers=headers) as resp:
+                if resp.status >= 400:
+                    body = await resp.text()
+                    _LOGGER.debug(
+                        "%s returned HTTP %s: %s", path, resp.status, body[:200]
+                    )
                 resp.raise_for_status()
                 result: dict[str, Any] = await resp.json(content_type=None)
         except aiohttp.ClientResponseError as err:
@@ -307,6 +327,7 @@ class WaterbeepClient:
             raise WaterbeepAuthError("Invalid or expired verification code")
         self._tfa_token = None
         self._tfa_entity = None
+        self._tfa_antiforgery = None
         self._token = await self._get_verification_token(DASHBOARD_LANDING)
         self._logged_in = True
         _LOGGER.debug("Waterbeep 2FA cleared for %s", self._user_code)

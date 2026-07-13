@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2]
+
+### Fixed
+- Two-factor verification no longer fails with "Failed to reach the Waterbeep
+  service" when picking a delivery channel. The `SubmitContact`/`SubmitOTP`
+  requests now carry the antiforgery `__RequestVerificationToken` scraped from
+  the challenge page — like every other request on the site — instead of being
+  rejected with HTTP 400. The config flow also logs the underlying error so a
+  genuine connection failure is diagnosable from the Home Assistant log.
+
 ## [0.2.1]
 
 ### Changed
