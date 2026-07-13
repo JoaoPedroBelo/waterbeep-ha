@@ -20,6 +20,7 @@ from custom_components.waterbeep.api import (
 # site: value before name for the hidden fields).
 TFA_PAGE = """
 <form id="tfaForm">
+  <input name="__RequestVerificationToken" type="hidden" value="TFA_AF_TOK" />
   <input type="hidden" value="TFA_TOKEN_123" id="tokenFa" name="Token">
   <input type="hidden" value="ENTITY_456" id="entityFa" name="EntityCode">
   <input class="form-check-input" type="radio" id="email" value="EmailVal" checked name="ContactType">
@@ -77,11 +78,15 @@ class _FakeSession:
         self._gets = list(gets)
         self._posts = list(posts)
         self.closed = False
+        # Records ``(url, data, headers)`` for every POST so tests can assert
+        # what was actually sent on the wire.
+        self.post_calls: list[tuple[str, dict | None, dict | None]] = []
 
     def get(self, url):
         return self._gets.pop(0)
 
     def post(self, url, data=None, headers=None):
+        self.post_calls.append((url, data, headers))
         return self._posts.pop(0)
 
     async def close(self) -> None:
@@ -135,6 +140,9 @@ class TestTwoFactorParsing:
         assert _scrape_hidden(TFA_PAGE, "Token") == "TFA_TOKEN_123"
         assert _scrape_hidden(TFA_PAGE, "EntityCode") == "ENTITY_456"
 
+    def test_scrape_antiforgery_name_before_value(self):
+        assert _scrape_hidden(TFA_PAGE, "__RequestVerificationToken") == "TFA_AF_TOK"
+
     def test_scrape_hidden_missing(self):
         assert _scrape_hidden(TFA_PAGE, "Nope") is None
 
@@ -161,6 +169,7 @@ class TestTwoFactorFlow:
         assert [c["id"] for c in excinfo.value.contacts] == ["email", "phone"]
         assert client._tfa_token == "TFA_TOKEN_123"
         assert client._tfa_entity == "ENTITY_456"
+        assert client._tfa_antiforgery == "TFA_AF_TOK"
         assert client._logged_in is False
 
     async def test_request_and_submit_otp_completes_login(self):
@@ -181,6 +190,15 @@ class TestTwoFactorFlow:
         assert client._logged_in is True
         assert client._token == "AJAX_TOK"
         assert client._tfa_token is None
+
+        # The antiforgery token must ride along with both 2FA handshakes,
+        # matching the rest of the site (omitting it yields HTTP 400).
+        contact_data = client._session.post_calls[1][1]
+        otp_data = client._session.post_calls[2][1]
+        assert contact_data["__RequestVerificationToken"] == "TFA_AF_TOK"
+        assert contact_data["ContactType"] == "PhoneVal"
+        assert otp_data["__RequestVerificationToken"] == "TFA_AF_TOK"
+        assert otp_data["OTPCode"] == "123456"
 
     async def test_submit_otp_rejects_bad_code(self):
         client = _client_with(
