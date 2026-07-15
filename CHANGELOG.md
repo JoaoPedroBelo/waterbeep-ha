@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Fixed
+- The Energy/Water dashboard now matches the official Waterbeep chart day-for-day.
+  Previously the `Total Consumption` sensor fed the dashboard a live
+  `total_increasing` value, but Waterbeep data is **backdated** — so every day's
+  usage was attributed to the poll hour, collapsing the daily distribution into a
+  single spike. Consumption is now imported as a long-term **external statistic**
+  (`waterbeep:consumption`), timestamped at each day's local midnight, so history
+  is placed on the correct days (the full 30-day window on a fresh install, with
+  no import spike).
+
+### Changed
+- **Breaking:** the `Total Consumption` sensor has been removed. Point the
+  Energy dashboard's water source at the **Waterbeep Consumption**
+  (`waterbeep:consumption`) statistic instead. The informative Daily / 7-Day /
+  30-Day / Monthly / Per-Capita sensors are unchanged.
+- The integration now depends on the `recorder` (required for statistics import).
+
 ## [0.2.2]
 
 ### Fixed

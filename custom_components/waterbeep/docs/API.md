@@ -68,7 +68,7 @@ flowchart LR
     N --> D5["month_latest"]
     N --> D6["capitation_avg"]
 
-    D1 --> S0["Total Consumption<br/>(total_increasing, m³)"]
+    D1 --> S0["waterbeep:consumption<br/>(external statistic, m³)<br/>→ Energy/Water dashboard"]
     D2 --> S2["30-Day Consumption"]
     D3 --> S3["Daily Consumption"]
     D4 --> S4["7-Day Consumption"]
@@ -100,31 +100,38 @@ Daily / monthly charts:
 
 ## Energy/Water dashboard note
 
-None of these endpoints exposes a cumulative meter index. The
-`Total Consumption` sensor therefore synthesises a monotonic
-`total_increasing` value by accumulating each newly completed day exactly once
-(`coordinator.accumulate_total`), persisting the running total + a date cursor
-across restarts. A fresh install seeds the cursor to the newest complete day so
-history is not imported as a one-off spike.
+None of these endpoints exposes a cumulative meter index, **and the data is
+backdated** — yesterday's total is only known today. A live `total_increasing`
+sensor would therefore misattribute every day's usage to the poll hour (the only
+moment its value changes), scrambling the Energy dashboard's daily bars.
+
+Instead, `statistics.py` imports each completed day as an hourly **external
+statistic** (`waterbeep:consumption`) timestamped at that day's **local
+midnight**, so each day lands in its own bucket and the dashboard matches the
+official Waterbeep chart day-for-day. Because we re-poll a sliding 30-day window,
+the running `sum` is continued from the last statistic already stored
+(`get_last_statistics`) and only newer days are appended — keeping `sum`
+monotonic and never re-writing history. A fresh install imports the full 30-day
+history at once (no spike, since each day is its own bucket).
 
 ```mermaid
 flowchart TD
-    START([poll / restart]) --> R{restored<br/>total?}
-    R -->|yes| USE["total = restored<br/>cursor = last_counted_date"]
-    R -->|no, fresh install| SEED["total = 0<br/>cursor = newest complete day<br/>(skip history → no spike)"]
-    USE --> LOOP
+    START([poll]) --> LAST{last stored<br/>statistic?}
+    LAST -->|yes| CONT["sum = last sum<br/>cursor = last day"]
+    LAST -->|no, fresh install| SEED["sum = 0<br/>cursor = none<br/>(import all 30 days)"]
+    CONT --> LOOP
     SEED --> LOOP
     LOOP{"for each day in<br/>daily_series (sorted)"} -->|"iso ≥ today"| SKIP1["skip<br/>(day still open)"]
-    LOOP -->|"iso ≤ cursor"| SKIP2["skip<br/>(already counted)"]
-    LOOP -->|new complete day| ADD["total += value<br/>cursor = iso"]
+    LOOP -->|"iso ≤ cursor"| SKIP2["skip<br/>(already imported)"]
+    LOOP -->|new complete day| ADD["sum += value<br/>point @ local midnight"]
     SKIP1 --> DONE
     SKIP2 --> DONE
-    ADD --> DONE([persist total + cursor])
+    ADD --> DONE([async_add_external_statistics])
 ```
 
-Because days are only ever *added* (never removed) and the current day is
-excluded until it closes, `total` is strictly non-decreasing — satisfying the
-Energy dashboard's `total_increasing` contract.
+Because days are only ever *appended* (never rewritten) and the current day is
+excluded until it closes, `sum` is strictly non-decreasing — satisfying the
+statistic's `has_sum` contract.
 
 > The captured `UserCode`/`Password`/tokens are per-session and must never be
 > committed. The `UserCode` is the account holder's NIF.

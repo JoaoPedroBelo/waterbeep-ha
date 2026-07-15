@@ -30,8 +30,8 @@ EP_CAPITATION: Final = "Dashboard/GetCapitationConsumption"  # body: numberOfInh
 
 # Entity unique ID suffixes.
 # Daily/monthly consumption values are in cubic metres (m³); capitation is
-# litres per person per day.
-SENSOR_TOTAL: Final = "total_consumption"  # cumulative accumulator (m³) - dashboard
+# litres per person per day. The Energy/Water dashboard is driven by the
+# ``waterbeep:consumption`` long-term statistic (see statistics.py), not a sensor.
 SENSOR_CONSUMPTION_DAY: Final = "consumption_day"  # latest complete day (m³)
 SENSOR_CONSUMPTION_7D: Final = "consumption_7d"  # last 7 days total (m³)
 SENSOR_CONSUMPTION_30D: Final = "consumption_30d"  # last 30 days total (m³)
@@ -61,4 +61,3 @@ DEFAULT_INHABITANTS: Final = 2
 ATTR_METER_ID: Final = "meter_id"
 ATTR_LABELS: Final = "labels"
 ATTR_VALUES: Final = "values"
-ATTR_LAST_COUNTED: Final = "last_counted_date"

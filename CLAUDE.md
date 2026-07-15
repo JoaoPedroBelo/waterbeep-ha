@@ -23,6 +23,7 @@ the API client, coordinator, or entities:
 |------|---------|
 | `api.py` | **All network logic.** Session, ASP.NET antiforgery, login, endpoint calls. |
 | `coordinator.py` | `DataUpdateCoordinator`; normalises raw payloads into `self.data`. Twice-daily schedule. |
+| `statistics.py` | Imports each completed day as the `waterbeep:consumption` external statistic (Energy/Water dashboard source). |
 | `const.py` | `Final`-typed constants: config keys, entity suffixes, `coordinator.data` keys, `POLL_HOURS`. |
 | `config_flow.py` / `__init__.py` | Config UI (validated by a live login) / entry point. |
 | `sensor.py` / `binary_sensor.py` | Entities. |
