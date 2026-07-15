@@ -38,6 +38,7 @@ from .const import (
     POLL_HOURS,
     POLL_MINUTE,
 )
+from .statistics import async_import_consumption_statistics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,7 +114,29 @@ class WaterbeepCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except WaterbeepError as err:
             raise UpdateFailed(f"Error communicating with Waterbeep: {err}") from err
 
-        return self._normalise(raw, dt_util.now().date().isoformat())
+        today_iso = dt_util.now().date().isoformat()
+        data = self._normalise(raw, today_iso)
+        await self._async_import_statistics(
+            data.get(DATA_DAILY_SERIES) or [], today_iso
+        )
+        return data
+
+    async def _async_import_statistics(
+        self, series: list[dict[str, Any]], today_iso: str
+    ) -> None:
+        """Feed completed days into the Energy dashboard's long-term statistics.
+
+        A statistics hiccup (recorder not ready, etc.) must never fail the poll,
+        so failures are logged and swallowed — the sensors still update.
+        """
+        if not series:
+            return
+        try:
+            await async_import_consumption_statistics(self.hass, series, today_iso)
+        except Exception:  # a stats failure must never fail the poll
+            _LOGGER.warning(
+                "Failed to import Waterbeep consumption statistics", exc_info=True
+            )
 
     @staticmethod
     def _normalise(raw: dict[str, Any], today_iso: str) -> dict[str, Any]:
@@ -223,30 +246,3 @@ def _to_floats(raw: Any) -> list[float]:
         except (TypeError, ValueError):
             continue
     return result
-
-
-def accumulate_total(
-    prev_total: float,
-    last_iso: str | None,
-    series: list[dict[str, Any]],
-    today_iso: str,
-) -> tuple[float, str | None]:
-    """Add each complete day not yet counted to a monotonic running total.
-
-    Days on or after ``today_iso`` are skipped (still changing); days already
-    counted (``iso <= last_iso``) are skipped. Returns ``(new_total, new_last_iso)``.
-    The total only ever increases, satisfying the Energy dashboard's
-    ``total_increasing`` contract.
-    """
-    total = prev_total
-    newest = last_iso
-    for entry in sorted(series, key=lambda e: e["iso"]):
-        iso = entry["iso"]
-        if iso >= today_iso:
-            continue
-        if last_iso is not None and iso <= last_iso:
-            continue
-        total += entry["value"]
-        if newest is None or iso > newest:
-            newest = iso
-    return round(total, 3), newest

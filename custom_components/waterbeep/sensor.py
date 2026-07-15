@@ -2,6 +2,11 @@
 
 Daily/monthly consumption values are in cubic metres (m³); capitation is in
 litres per person per day. All verified live.
+
+The Energy/Water dashboard is fed by the ``waterbeep:consumption`` long-term
+statistic imported by the coordinator (see ``statistics.py``), not by a live
+sensor: Waterbeep data is backdated, so a live ``total_increasing`` sensor would
+misattribute each day's usage to the poll hour.
 """
 
 from __future__ import annotations
@@ -15,15 +20,12 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_LABELS,
-    ATTR_LAST_COUNTED,
     ATTR_METER_ID,
     ATTR_VALUES,
     DATA_CAPITATION_AVG,
@@ -31,7 +33,6 @@ from .const import (
     DATA_CONSUMPTION_30D,
     DATA_CONSUMPTION_DAY,
     DATA_DAILY_LABELS,
-    DATA_DAILY_SERIES,
     DATA_DAILY_VALUES,
     DATA_MONTH_LABEL,
     DATA_MONTH_LATEST,
@@ -41,9 +42,8 @@ from .const import (
     SENSOR_CONSUMPTION_30D,
     SENSOR_CONSUMPTION_DAY,
     SENSOR_MONTH,
-    SENSOR_TOTAL,
 )
-from .coordinator import WaterbeepCoordinator, accumulate_total
+from .coordinator import WaterbeepCoordinator
 
 
 async def async_setup_entry(
@@ -56,9 +56,8 @@ async def async_setup_entry(
 
     async_add_entities(
         [
-            # Cumulative accumulator - the Energy/Water dashboard entity.
-            WaterbeepTotalConsumptionSensor(coordinator, entry),
-            # Informative period sensors (m³).
+            # Informative period sensors (m³). The Energy/Water dashboard is fed
+            # by the imported ``waterbeep:consumption`` statistic, not a sensor.
             WaterbeepValueSensor(
                 coordinator,
                 entry,
@@ -183,74 +182,3 @@ class WaterbeepCapitationSensor(_WaterbeepBase):
     def native_value(self) -> float | None:
         """Return litres per person per day."""
         return self.coordinator.data.get(DATA_CAPITATION_AVG)
-
-
-class WaterbeepTotalConsumptionSensor(_WaterbeepBase, RestoreEntity):
-    """Cumulative water consumption (m³) for the Energy/Water dashboard.
-
-    The Waterbeep API exposes only per-period consumption, so there is no
-    lifetime meter index. This sensor keeps a monotonic running total by adding
-    each newly completed day exactly once (``accumulate_total``) and persisting
-    the total plus a cursor across restarts. On a fresh install it seeds the
-    cursor to the newest complete day so historical days are not imported as a
-    one-off spike.
-    """
-
-    def __init__(self, coordinator: WaterbeepCoordinator, entry: ConfigEntry) -> None:
-        """Initialise the accumulator."""
-        super().__init__(coordinator, entry, SENSOR_TOTAL, "Total Consumption")
-        self._attr_icon = "mdi:water-pump"
-        self._attr_device_class = SensorDeviceClass.WATER
-        self._attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
-        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-        self._attr_suggested_display_precision = 3
-        self._total: float | None = None
-        self._last_iso: str | None = None
-
-    async def async_added_to_hass(self) -> None:
-        """Restore the running total, or seed a fresh baseline."""
-        await super().async_added_to_hass()
-        last = await self.async_get_last_state()
-        restored = False
-        if last is not None and last.state not in (None, "unknown", "unavailable"):
-            try:
-                self._total = float(last.state)
-                self._last_iso = last.attributes.get(ATTR_LAST_COUNTED)
-                restored = True
-            except (ValueError, TypeError):
-                restored = False
-        if not restored:
-            # Fresh install: don't import history as a spike; only count days
-            # completed from now on.
-            self._total = 0.0
-            self._last_iso = self._newest_complete_iso()
-        self._recompute()
-
-    def _newest_complete_iso(self) -> str | None:
-        today_iso = dt_util.now().date().isoformat()
-        series = self.coordinator.data.get(DATA_DAILY_SERIES) or []
-        past = [e["iso"] for e in series if e["iso"] < today_iso]
-        return max(past) if past else None
-
-    def _recompute(self) -> None:
-        series = self.coordinator.data.get(DATA_DAILY_SERIES) or []
-        today_iso = dt_util.now().date().isoformat()
-        base = self._total if self._total is not None else 0.0
-        self._total, self._last_iso = accumulate_total(
-            base, self._last_iso, series, today_iso
-        )
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        self._recompute()
-        super()._handle_coordinator_update()
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the cumulative total in m³."""
-        return self._total
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Persist the accumulation cursor across restarts."""
-        return {ATTR_LAST_COUNTED: self._last_iso}

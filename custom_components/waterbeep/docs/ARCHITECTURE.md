@@ -56,7 +56,8 @@ sequenceDiagram
 | File | Purpose |
 |------|---------|
 | `api.py` | HTTP client: private session, antiforgery handling, login, endpoint calls. **All network logic lives here.** |
-| `coordinator.py` | `DataUpdateCoordinator`; normalises the four raw payloads into a flat `self.data`, and provides `accumulate_total` for the cumulative sensor. |
+| `coordinator.py` | `DataUpdateCoordinator`; normalises the four raw payloads into a flat `self.data`, then hands the daily series to `statistics.py`. |
+| `statistics.py` | Imports each completed day as a long-term **external statistic** (`waterbeep:consumption`) — the Energy/Water dashboard source. |
 | `const.py` | `Final`-typed constants: config keys, endpoints, entity suffixes, `coordinator.data` keys, `POLL_HOURS`. |
 | `config_flow.py` / `__init__.py` | Setup UI (validated by a live login) / entry point (registers the twice-daily schedule). |
 | `sensor.py` / `binary_sensor.py` | Entities. All state read from `coordinator.data`; return `None` when missing. |
@@ -65,7 +66,6 @@ sequenceDiagram
 
 | Entity | `coordinator.data` key | Unit | State class |
 |--------|------------------------|------|-------------|
-| Total Consumption | `daily_series` (accumulated) | m³ | `total_increasing` |
 | Daily Consumption | `consumption_day` | m³ | `measurement` |
 | 7-Day Consumption | `consumption_7d` | m³ | `measurement` |
 | 30-Day Consumption | `consumption_30d` | m³ | `measurement` |
@@ -73,11 +73,19 @@ sequenceDiagram
 | Average Per-Capita Consumption | `capitation_avg` | L | `measurement` |
 | Available (binary) | `available` | — | — |
 
-The **Total Consumption** sensor is the Energy/Water dashboard entity. The
-Waterbeep API exposes no lifetime meter index, so it synthesises a monotonic
-value with `accumulate_total`, adding each newly completed day exactly once and
-persisting the running total plus a date cursor across restarts (see
-[`API.md`](API.md)).
+The sensors above are **informative** (all `measurement`). The Energy/Water
+dashboard is instead fed by the `waterbeep:consumption` **external statistic**
+imported from `daily_series` (see [`API.md`](API.md) and `statistics.py`).
+
+### Why a statistic, not a `total_increasing` sensor
+
+Waterbeep data is **backdated** — yesterday's total is only known today. A live
+`total_increasing` sensor can only report that the running total went up *now*,
+so the Energy dashboard (which derives consumption from the sensor's hourly
+deltas) attributes every day's usage to the poll hour and scrambles the daily
+distribution. Importing each completed day as an hourly statistic timestamped at
+that day's **local midnight** places each day's m³ in its own bucket, so the
+dashboard matches the official Waterbeep chart day-for-day, history included.
 
 ## Polling schedule
 

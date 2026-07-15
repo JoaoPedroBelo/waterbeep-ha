@@ -12,7 +12,6 @@ from custom_components.waterbeep.const import (
 )
 from custom_components.waterbeep.sensor import (
     WaterbeepCapitationSensor,
-    WaterbeepTotalConsumptionSensor,
     WaterbeepValueSensor,
 )
 
@@ -72,16 +71,6 @@ def test_capitation_sensor(mock_coordinator, mock_config_entry):
     s = WaterbeepCapitationSensor(mock_coordinator, mock_config_entry)
     assert s.native_value == 133.0
     assert s.native_unit_of_measurement == "L"
-
-
-def test_total_sensor_reports_and_persists_cursor(mock_coordinator, mock_config_entry):
-    s = WaterbeepTotalConsumptionSensor(mock_coordinator, mock_config_entry)
-    # Simulate a restored running total + cursor.
-    s._total = 12.5
-    s._last_iso = "2026-07-04"
-    assert s.native_value == 12.5
-    assert s.state_class is not None
-    assert s.extra_state_attributes["last_counted_date"] == "2026-07-04"
 
 
 def test_missing_data_returns_none(mock_coordinator, mock_config_entry):

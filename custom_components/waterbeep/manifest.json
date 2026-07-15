@@ -3,11 +3,11 @@
   "name": "Waterbeep (EPAL)",
   "codeowners": ["@JoaoPedroBelo"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["recorder"],
   "documentation": "https://github.com/JoaoPedroBelo/waterbeep-ha",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/JoaoPedroBelo/waterbeep-ha/issues",
   "requirements": [],
-  "version": "0.2.2"
+  "version": "0.3.0"
 }
