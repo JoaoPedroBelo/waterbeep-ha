@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1]
+
+### Fixed
+- Recent days could be stuck at 0 on the Energy dashboard. Waterbeep publishes a
+  day's total with a delay, so a day can still read 0 shortly after it closes and
+  fill in later. The importer used a forward-only cursor: it locked a day in on
+  first sight (0 included) and never revisited it, so late-arriving values were
+  lost. It now re-imports a trailing 7-day window on every poll — anchored on the
+  cumulative sum of the last stable day so history stays monotonic — letting late
+  values overwrite the earlier 0s.
+
 ## [0.3.0]
 
 ### Fixed
