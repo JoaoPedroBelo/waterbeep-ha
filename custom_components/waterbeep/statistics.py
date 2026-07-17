@@ -106,9 +106,7 @@ async def async_import_consumption_statistics(
     last_stats = await get_instance(hass).async_add_executor_job(
         get_last_statistics, hass, CORRECTION_DAYS + 1, STATISTIC_ID, True, {"sum"}
     )
-    stored = sorted(
-        last_stats.get(STATISTIC_ID) or [], key=lambda r: float(r["start"])
-    )
+    stored = sorted(last_stats.get(STATISTIC_ID) or [], key=lambda r: float(r["start"]))
     if stored:
         anchor = stored[0]
         anchor_sum = float(anchor.get("sum") or 0.0)
