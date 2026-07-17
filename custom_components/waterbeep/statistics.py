@@ -36,6 +36,13 @@ _LOGGER = logging.getLogger(__name__)
 STATISTIC_ID: Final = f"{DOMAIN}:consumption"
 STATISTIC_NAME: Final = "Waterbeep Consumption"
 
+# Waterbeep posts a day's total with a delay — a day can read 0 for a while
+# after it closes, then fill in. So we don't lock a day in on first sight;
+# instead each poll re-imports a trailing window of recent days (overwriting any
+# late-arriving corrections), anchored on the cumulative sum of the last stable
+# day before the window. Older history is never rewritten.
+CORRECTION_DAYS: Final = 7
+
 
 def build_statistic_points(
     series: list[dict[str, Any]],
@@ -68,7 +75,12 @@ async def async_import_consumption_statistics(
     series: list[dict[str, Any]],
     today_iso: str,
 ) -> None:
-    """Append newly completed days to the ``waterbeep:consumption`` statistic."""
+    """Import completed days into the ``waterbeep:consumption`` statistic.
+
+    Re-imports a trailing window of recent days each call so Waterbeep's
+    late-arriving daily totals overwrite any earlier (0) values, then extends
+    with newly completed days.
+    """
     # The recorder is a declared dependency but must be imported lazily: the
     # module pulls in native deps that are intentionally absent from the unit
     # test environment (see tests/test_statistics.py, which covers the pure
@@ -86,21 +98,26 @@ async def async_import_consumption_statistics(
     if not series:
         return
 
+    # Anchor on the last *stable* day: fetch the most recent stored days and step
+    # back CORRECTION_DAYS. Everything after the anchor is recomputed from the
+    # current series and re-imported, so late-arriving values overwrite whatever
+    # (possibly 0) was stored earlier; the anchor's cumulative sum keeps the
+    # series monotonic across the overwrite and across month boundaries.
     last_stats = await get_instance(hass).async_add_executor_job(
-        get_last_statistics, hass, 1, STATISTIC_ID, True, {"sum"}
+        get_last_statistics, hass, CORRECTION_DAYS + 1, STATISTIC_ID, True, {"sum"}
     )
-    rows = last_stats.get(STATISTIC_ID)
-    if rows:
-        last_sum = float(rows[0].get("sum") or 0.0)
-        last_dt = dt_util.utc_from_timestamp(rows[0]["start"]).astimezone(
-            dt_util.DEFAULT_TIME_ZONE
-        )
-        last_iso: str | None = last_dt.date().isoformat()
+    stored = sorted(
+        last_stats.get(STATISTIC_ID) or [], key=lambda r: float(r["start"])
+    )
+    if stored:
+        anchor = stored[0]
+        anchor_sum = float(anchor.get("sum") or 0.0)
+        anchor_iso: str | None = _ts_to_local_iso(float(anchor["start"]))
     else:
-        last_sum = 0.0
-        last_iso = None
+        anchor_sum = 0.0
+        anchor_iso = None
 
-    points = build_statistic_points(series, last_iso, last_sum, today_iso)
+    points = build_statistic_points(series, anchor_iso, anchor_sum, today_iso)
     if not points:
         return
 
@@ -126,3 +143,16 @@ async def async_import_consumption_statistics(
         len(points),
         points[-1]["iso"],
     )
+
+
+def _ts_to_local_iso(start_ts: float) -> str:
+    """Convert a recorder ``start`` timestamp to a local ``YYYY-MM-DD`` date.
+
+    ``get_last_statistics`` returns ``start`` as epoch seconds, but some HA
+    versions have used milliseconds; normalise defensively (a 2020+ date is
+    ~1.6e9 s vs ~1.6e12 ms, so the split is unambiguous).
+    """
+    if start_ts > 1e11:
+        start_ts /= 1000.0
+    local = dt_util.utc_from_timestamp(start_ts).astimezone(dt_util.DEFAULT_TIME_ZONE)
+    return local.date().isoformat()

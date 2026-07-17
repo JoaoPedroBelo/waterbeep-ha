@@ -69,3 +69,17 @@ class TestBuildStatisticPoints:
 
     def test_empty_series(self):
         assert build_statistic_points([], None, 0.0, "2026-07-06") == []
+
+    def test_reimport_from_anchor_corrects_a_late_value(self):
+        # A day previously stored as 0 (late Waterbeep posting) now has its real
+        # value. Re-importing from the stable anchor (2 Jul, sum 0.231) recomputes
+        # the trailing days from current values, overwriting the stale 0.
+        series = [
+            {"iso": "2026-07-02", "value": 0.231},  # anchor day (stable)
+            {"iso": "2026-07-03", "value": 0.592},  # was 0 before, now filled in
+            {"iso": "2026-07-04", "value": 0.032},
+        ]
+        points = build_statistic_points(series, "2026-07-02", 0.231, "2026-07-05")
+        assert [p["iso"] for p in points] == ["2026-07-03", "2026-07-04"]
+        assert [p["state"] for p in points] == [0.592, 0.032]
+        assert [p["sum"] for p in points] == [0.823, 0.855]
