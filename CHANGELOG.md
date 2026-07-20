@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2]
+
+### Fixed
+- Requesting the 2FA one-time code failed with "Failed to reach the Waterbeep
+  service" (the v0.2.2 fix addressed a different, non-root cause). The server
+  binds the 2FA challenge to its ASP.NET session cookie, and the reauth flow
+  logs in when the flow is *created* — by the time the user picks a delivery
+  channel that session has expired, and `SubmitContact` against the dead
+  session makes Waterbeep return HTTP 500. The flow now re-issues the challenge
+  (fresh session cookies + `Token`/`EntityCode`) immediately before requesting
+  the code.
+- 2FA send/submit failures now log the underlying HTTP error (previously
+  swallowed), so future issues are diagnosable from the HA log.
+
 ## [0.3.1]
 
 ### Fixed

@@ -288,6 +288,24 @@ class WaterbeepClient:
             raise WaterbeepConnectionError(f"{path} request failed: {err}") from err
         return result
 
+    async def async_refresh_challenge(self) -> None:
+        """Re-issue the 2FA challenge so the OTP request hits a live session.
+
+        The challenge captured during the initial login is bound server-side to
+        an ``.AspNetCore.Session`` cookie. That session expires while the user
+        is choosing a delivery channel (the reauth flow logs in when it is
+        *created*, which can be long before the user acts). Posting
+        ``SubmitContact`` against the dead session makes Waterbeep return HTTP
+        500. Re-running the login refreshes the session cookies and the
+        ``Token``/``EntityCode`` bound to them, right before we need them.
+        """
+        try:
+            await self.async_login()
+        except WaterbeepTwoFactorRequired:
+            # Expected path: the login refreshed the pending challenge (fresh
+            # session cookies + Token/EntityCode) as a side effect.
+            _LOGGER.debug("Waterbeep 2FA challenge refreshed for %s", self._user_code)
+
     async def async_request_otp(self, contact_value: str) -> None:
         """Ask Waterbeep to send the OTP to the chosen delivery channel.
 

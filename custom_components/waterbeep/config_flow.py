@@ -137,6 +137,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None and self._client is not None:
             try:
+                # The challenge captured when this flow was created may have
+                # expired while the user picked a channel; re-issue it so the
+                # OTP request posts against a live session (else Waterbeep 500s).
+                await self._client.async_refresh_challenge()
                 await self._client.async_request_otp(user_input["contact"])
             except WaterbeepConnectionError as err:
                 _LOGGER.warning(
