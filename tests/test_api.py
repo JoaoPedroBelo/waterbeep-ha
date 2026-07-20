@@ -28,6 +28,10 @@ TFA_PAGE = """
 </form>
 """
 
+# A second challenge page with a *different* Token, to prove a refresh re-scrapes
+# fresh challenge state (the live session binding that avoids the HTTP 500).
+TFA_PAGE_2 = TFA_PAGE.replace("TFA_TOKEN_123", "TFA_TOKEN_999")
+
 LOGIN_PAGE = (
     '<form id="login-form"><input name="__RequestVerificationToken" '
     'type="hidden" value="LOGIN_TOK" /></form>'
@@ -199,6 +203,27 @@ class TestTwoFactorFlow:
         assert contact_data["ContactType"] == "PhoneVal"
         assert otp_data["__RequestVerificationToken"] == "TFA_AF_TOK"
         assert otp_data["OTPCode"] == "123456"
+
+    async def test_refresh_challenge_reissues_token(self):
+        # The initial login challenge goes stale; refreshing must re-login and
+        # re-scrape a fresh Token (bound to a live session) without surfacing
+        # the WaterbeepTwoFactorRequired to the caller.
+        client = _client_with(
+            gets=[_FakeResponse(text=LOGIN_PAGE), _FakeResponse(text=LOGIN_PAGE)],
+            posts=[
+                _FakeResponse(text=TFA_PAGE, url="https://x/Account/TwoFactorAuth"),
+                _FakeResponse(text=TFA_PAGE_2, url="https://x/Account/TwoFactorAuth"),
+            ],
+        )
+
+        with pytest.raises(WaterbeepTwoFactorRequired):
+            await client.async_login()
+        assert client._tfa_token == "TFA_TOKEN_123"
+
+        await client.async_refresh_challenge()  # swallows the 2FA raise
+        assert client._tfa_token == "TFA_TOKEN_999"
+        assert client._tfa_entity == "ENTITY_456"
+        assert client._logged_in is False
 
     async def test_submit_otp_rejects_bad_code(self):
         client = _client_with(
