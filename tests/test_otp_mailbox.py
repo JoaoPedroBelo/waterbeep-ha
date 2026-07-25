@@ -4,8 +4,11 @@ Payload shapes mirror Resend's documented ``GET /emails/receiving`` (list) and
 ``GET /emails/receiving/{id}`` (single message) responses.
 """
 
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
+import aiohttp
 from aioresponses import aioresponses
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -22,6 +25,7 @@ from custom_components.waterbeep.const import (
 from custom_components.waterbeep.otp_mailbox import (
     OtpMailboxConfig,
     OtpMailboxError,
+    ResendOtpMailbox,
     async_create_mailbox,
     extract_otp_code,
     html_to_text,
@@ -56,9 +60,23 @@ def _meta(
     }
 
 
-def _mailbox(hass: HomeAssistant, **extra):
-    """Build a mailbox from config, as the coordinator and config flow do."""
-    return async_create_mailbox(hass, {CONF_OTP_RESEND_API_KEY: API_KEY, **extra})
+@pytest.fixture
+async def session() -> AsyncIterator[aiohttp.ClientSession]:
+    """A session owned by the test.
+
+    Deliberately not Home Assistant's shared session: it outlives the test and
+    trips ``pytest_homeassistant_custom_component``'s lingering-thread check at
+    teardown. Nothing here needs HA's session — the client takes any.
+    """
+    async with aiohttp.ClientSession() as client:
+        yield client
+
+
+def _mailbox(session: aiohttp.ClientSession, **extra) -> ResendOtpMailbox:
+    """Build a mailbox with the same config path the coordinator uses."""
+    config = OtpMailboxConfig.from_config({CONF_OTP_RESEND_API_KEY: API_KEY, **extra})
+    assert config is not None
+    return ResendOtpMailbox(session, config)
 
 
 # --- Code extraction -------------------------------------------------------
@@ -169,10 +187,12 @@ def test_config_matches_from_and_to() -> None:
 # --- Inbox polling ---------------------------------------------------------
 
 
-async def test_fetch_code_reads_the_newest_matching_mail(hass: HomeAssistant) -> None:
+async def test_fetch_code_reads_the_newest_matching_mail(
+    session: aiohttp.ClientSession,
+) -> None:
     """The most recent inbound mail wins, whatever order Resend lists them in."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         mocked.get(
@@ -194,11 +214,11 @@ async def test_fetch_code_reads_the_newest_matching_mail(hass: HomeAssistant) ->
 
 
 async def test_fetch_code_ignores_mail_older_than_the_request(
-    hass: HomeAssistant,
+    session: aiohttp.ClientSession,
 ) -> None:
     """A previous attempt's code can never be replayed."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         # Well outside the clock-skew leeway.
@@ -212,10 +232,12 @@ async def test_fetch_code_ignores_mail_older_than_the_request(
     assert code is None
 
 
-async def test_fetch_code_applies_the_sender_filter(hass: HomeAssistant) -> None:
+async def test_fetch_code_applies_the_sender_filter(
+    session: aiohttp.ClientSession,
+) -> None:
     """Mail from another sender is skipped when a from-filter is set."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass, otp_from_filter="aquamatrix.pt")
+    mailbox = _mailbox(session, otp_from_filter="aquamatrix.pt")
 
     with aioresponses() as mocked:
         mocked.get(
@@ -231,10 +253,12 @@ async def test_fetch_code_applies_the_sender_filter(hass: HomeAssistant) -> None
     assert code is None
 
 
-async def test_fetch_code_does_not_reinspect_a_seen_mail(hass: HomeAssistant) -> None:
+async def test_fetch_code_does_not_reinspect_a_seen_mail(
+    session: aiohttp.ClientSession,
+) -> None:
     """A mail without a code is fetched once, not on every poll."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
     payload = {"data": [_meta("plain", since + timedelta(seconds=5))]}
 
     with aioresponses() as mocked:
@@ -247,10 +271,12 @@ async def test_fetch_code_does_not_reinspect_a_seen_mail(hass: HomeAssistant) ->
         assert await mailbox.async_fetch_code(since) is None
 
 
-async def test_wait_for_code_gives_up_after_the_timeout(hass: HomeAssistant) -> None:
+async def test_wait_for_code_gives_up_after_the_timeout(
+    session: aiohttp.ClientSession,
+) -> None:
     """An empty inbox returns None instead of blocking the poll forever."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         mocked.get(LIST_URL, payload={"data": []})
@@ -259,10 +285,10 @@ async def test_wait_for_code_gives_up_after_the_timeout(hass: HomeAssistant) -> 
     assert code is None
 
 
-async def test_wait_for_code_returns_the_code(hass: HomeAssistant) -> None:
+async def test_wait_for_code_returns_the_code(session: aiohttp.ClientSession) -> None:
     """The happy path: the forwarded mail is there and carries the code."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         mocked.get(LIST_URL, payload={"data": [_meta("m1", since)]})
@@ -280,11 +306,11 @@ async def test_wait_for_code_returns_the_code(hass: HomeAssistant) -> None:
 
 
 async def test_wait_for_code_keeps_polling_until_the_mail_lands(
-    hass: HomeAssistant,
+    session: aiohttp.ClientSession,
 ) -> None:
     """Forwarding takes a moment, so an empty first poll is not a failure."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         mocked.get(LIST_URL, payload={"data": []})
@@ -295,10 +321,10 @@ async def test_wait_for_code_keeps_polling_until_the_mail_lands(
     assert code == "987654"
 
 
-async def test_unparseable_payloads_are_ignored(hass: HomeAssistant) -> None:
+async def test_unparseable_payloads_are_ignored(session: aiohttp.ClientSession) -> None:
     """A malformed list or timestamp must not raise, just yield no code."""
     since = dt_util.utcnow()
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         mocked.get(LIST_URL, payload={"object": "list"})  # no "data" key at all
@@ -311,9 +337,9 @@ async def test_unparseable_payloads_are_ignored(hass: HomeAssistant) -> None:
         assert await mailbox.async_fetch_code(since) is None
 
 
-async def test_server_error_raises(hass: HomeAssistant) -> None:
+async def test_server_error_raises(session: aiohttp.ClientSession) -> None:
     """A Resend outage is reported so the caller can fall back to the prompt."""
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         mocked.get(LIST_URL, status=500)
@@ -321,9 +347,9 @@ async def test_server_error_raises(hass: HomeAssistant) -> None:
             await mailbox.async_fetch_code(dt_util.utcnow())
 
 
-async def test_rejected_api_key_raises(hass: HomeAssistant) -> None:
+async def test_rejected_api_key_raises(session: aiohttp.ClientSession) -> None:
     """A bad key is reported, not silently treated as an empty inbox."""
-    mailbox = _mailbox(hass)
+    mailbox = _mailbox(session)
 
     with aioresponses() as mocked:
         mocked.get(LIST_URL, status=401)
@@ -331,6 +357,20 @@ async def test_rejected_api_key_raises(hass: HomeAssistant) -> None:
             await mailbox.async_fetch_code(dt_util.utcnow())
 
 
-async def test_create_mailbox_returns_none_when_disabled(hass: HomeAssistant) -> None:
-    """No API key configured means the coordinator gets no mailbox at all."""
-    assert async_create_mailbox(hass, {}) is None
+async def test_create_mailbox_honours_the_api_key(hass: HomeAssistant) -> None:
+    """The factory the coordinator and config flow call, wired to HA's session.
+
+    HA's shared session is patched out: actually creating it leaves a thread
+    behind that trips the lingering-thread check at teardown.
+    """
+    with patch(
+        "custom_components.waterbeep.otp_mailbox.async_get_clientsession"
+    ) as mock_session:
+        # No key: the feature is off and HA's session is never even touched.
+        assert async_create_mailbox(hass, {}) is None
+        mock_session.assert_not_called()
+
+        mailbox = async_create_mailbox(hass, {CONF_OTP_RESEND_API_KEY: API_KEY})
+
+    assert isinstance(mailbox, ResendOtpMailbox)
+    mock_session.assert_called_once_with(hass)
