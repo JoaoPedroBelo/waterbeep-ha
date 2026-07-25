@@ -3,10 +3,11 @@
     "step": {
       "user": {
         "title": "Waterbeep Setup",
-        "description": "Sign in with your Waterbeep (Aquamatrix) account. Your NIF is the account User Code. Data is refreshed twice a day (01:00 and 13:00).",
+        "description": "Sign in with your Waterbeep (Aquamatrix) account. Your NIF is the account User Code. Data is refreshed twice a day (01:00 and 13:00).\n\nOptional: paste a Resend API key to have two-factor codes read automatically from a Resend inbound mailbox (see the documentation).",
         "data": {
           "username": "NIF",
-          "password": "Password"
+          "password": "Password",
+          "otp_resend_api_key": "Resend API key (optional)"
         }
       },
       "reauth_confirm": {
@@ -41,6 +42,19 @@
     "abort": {
       "already_configured": "This Waterbeep account is already configured",
       "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Automatic two-factor codes",
+        "description": "Waterbeep emails its one-time code. Forward that email to a Resend inbound address and Home Assistant will read the code from there, clearing the challenge without any prompt. Leave the API key empty to disable this and be asked for the code instead.",
+        "data": {
+          "otp_resend_api_key": "Resend API key",
+          "otp_from_filter": "Only accept mail from (optional)",
+          "otp_to_filter": "Only accept mail sent to (optional)"
+        }
+      }
     }
   }
 }

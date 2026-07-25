@@ -12,8 +12,15 @@ from custom_components.waterbeep.api import (
     WaterbeepConnectionError,
     WaterbeepTwoFactorRequired,
 )
-from custom_components.waterbeep.config_flow import ConfigFlow
-from custom_components.waterbeep.const import CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from custom_components.waterbeep.config_flow import ConfigFlow, OptionsFlowHandler
+from custom_components.waterbeep.const import (
+    CONF_OTP_FROM_FILTER,
+    CONF_OTP_RESEND_API_KEY,
+    CONF_OTP_TO_FILTER,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DOMAIN,
+)
 
 USER_INPUT = {CONF_USERNAME: "12345678", CONF_PASSWORD: "secret"}
 CONTACTS = [{"id": "phone", "value": "PhoneVal"}, {"id": "email", "value": "EmailVal"}]
@@ -178,6 +185,110 @@ async def test_reauth_two_factor_flow(hass: HomeAssistant) -> None:
     assert result["reason"] == "reauth_successful"
     mock_reload.assert_awaited_once_with(entry.entry_id)
     assert entry.data[CONF_PASSWORD] == "secret"
+
+
+async def test_emailed_code_is_read_automatically(hass: HomeAssistant) -> None:
+    """With a Resend inbox configured, the code step never faces the user."""
+    flow = _make_flow(hass)
+    instance = _mock_2fa_client()
+    mailbox = AsyncMock()
+    mailbox.async_wait_for_code = AsyncMock(return_value="123456")
+
+    with (
+        patch(
+            "custom_components.waterbeep.config_flow.WaterbeepClient",
+            return_value=instance,
+        ),
+        patch(
+            "custom_components.waterbeep.config_flow.async_create_mailbox",
+            return_value=mailbox,
+        ),
+    ):
+        await flow.async_step_user({**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"})
+        # Picking the email channel completes the whole challenge in one step.
+        result = await flow.async_step_contact({"contact": "EmailVal"})
+
+    instance.async_submit_otp.assert_awaited_once_with("123456")
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_OTP_RESEND_API_KEY] == "re_abc"
+
+
+async def test_sms_channel_never_touches_the_inbox(hass: HomeAssistant) -> None:
+    """A code sent by SMS is not going to show up in the Resend inbox."""
+    flow = _make_flow(hass)
+    instance = _mock_2fa_client()
+    mailbox = AsyncMock()
+
+    with (
+        patch(
+            "custom_components.waterbeep.config_flow.WaterbeepClient",
+            return_value=instance,
+        ),
+        patch(
+            "custom_components.waterbeep.config_flow.async_create_mailbox",
+            return_value=mailbox,
+        ),
+    ):
+        await flow.async_step_user({**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"})
+        result = await flow.async_step_contact({"contact": "PhoneVal"})
+
+    mailbox.async_wait_for_code.assert_not_awaited()
+    assert result["step_id"] == "otp"
+
+
+async def test_silent_inbox_falls_back_to_the_code_form(hass: HomeAssistant) -> None:
+    """If nothing arrives in time the user is still asked for the code."""
+    flow = _make_flow(hass)
+    instance = _mock_2fa_client()
+    mailbox = AsyncMock()
+    mailbox.async_wait_for_code = AsyncMock(return_value=None)
+
+    with (
+        patch(
+            "custom_components.waterbeep.config_flow.WaterbeepClient",
+            return_value=instance,
+        ),
+        patch(
+            "custom_components.waterbeep.config_flow.async_create_mailbox",
+            return_value=mailbox,
+        ),
+    ):
+        await flow.async_step_user({**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"})
+        result = await flow.async_step_contact({"contact": "EmailVal"})
+
+    instance.async_submit_otp.assert_not_awaited()
+    assert result["step_id"] == "otp"
+
+
+async def test_options_flow_edits_the_otp_settings(hass: HomeAssistant) -> None:
+    """The Resend settings can be added, narrowed, and cleared after setup."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_old"},
+        unique_id="12345678",
+    )
+    entry.add_to_hass(hass)
+
+    flow = OptionsFlowHandler(entry)
+    flow.hass = hass
+
+    result = await flow.async_step_init()
+    assert result["step_id"] == "init"
+
+    result = await flow.async_step_init(
+        {
+            CONF_OTP_RESEND_API_KEY: "  re_new  ",
+            CONF_OTP_FROM_FILTER: "aquamatrix.pt",
+        }
+    )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        CONF_OTP_RESEND_API_KEY: "re_new",
+        CONF_OTP_FROM_FILTER: "aquamatrix.pt",
+        # Empty values are stored so they can override the entry data.
+        CONF_OTP_TO_FILTER: "",
+    }
 
 
 async def test_reauth_asks_password_only_when_rejected(hass: HomeAssistant) -> None:
