@@ -64,11 +64,17 @@ def _meta(
 async def session() -> AsyncIterator[aiohttp.ClientSession]:
     """A session owned by the test.
 
-    Deliberately not Home Assistant's shared session: it outlives the test and
-    trips ``pytest_homeassistant_custom_component``'s lingering-thread check at
-    teardown. Nothing here needs HA's session — the client takes any.
+    Deliberately not Home Assistant's shared session, which outlives the test.
+    Nothing here needs it — the client takes any session.
+
+    The explicit ``ThreadedResolver`` matters: with ``aiodns`` installed (a Home
+    Assistant dependency) aiohttp defaults to ``AsyncResolver``, whose pycares
+    channel starts a daemon thread that survives the test and trips
+    ``pytest_homeassistant_custom_component``'s lingering-thread check. No DNS
+    ever happens here anyway — ``aioresponses`` intercepts every request.
     """
-    async with aiohttp.ClientSession() as client:
+    connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
+    async with aiohttp.ClientSession(connector=connector) as client:
         yield client
 
 
