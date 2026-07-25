@@ -45,8 +45,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.async_setup_schedule()
     entry.async_on_unload(coordinator.async_teardown_schedule)
 
+    # Options (the automatic-2FA settings) are read at setup, so apply edits by
+    # reloading the entry.
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
     _LOGGER.info("Waterbeep integration setup complete")
     return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the entry after its options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

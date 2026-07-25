@@ -38,6 +38,7 @@ from .const import (
     POLL_HOURS,
     POLL_MINUTE,
 )
+from .otp_mailbox import OtpMailboxError, ResendOtpMailbox, async_create_mailbox
 from .statistics import async_import_consumption_statistics
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +62,12 @@ class WaterbeepCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             inhabitants=DEFAULT_INHABITANTS,
         )
         self._unsub_schedule: list[CALLBACK_TYPE] = []
+        # Optional: when a Resend API key is configured, a 2FA challenge can be
+        # cleared unattended by reading the emailed code out of that inbox
+        # instead of falling back to HA's reauth prompt.
+        self._otp_mailbox: ResendOtpMailbox | None = async_create_mailbox(hass, config)
+        if self._otp_mailbox is not None:
+            _LOGGER.debug("Automatic Waterbeep 2FA retrieval is enabled")
 
         # No periodic ``update_interval``: we poll on a fixed twice-daily
         # schedule instead (see ``async_setup_schedule``) to stay low-profile.
@@ -102,11 +109,10 @@ class WaterbeepCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             raw = await self.client.async_get_data()
         except WaterbeepTwoFactorRequired as err:
-            # Waterbeep is challenging with 2FA; trigger HA's reauth flow so the
-            # user can complete the one-time code and re-trust this connection.
-            raise ConfigEntryAuthFailed(
-                "Waterbeep requires two-factor verification"
-            ) from err
+            # Waterbeep is challenging with 2FA. Clear it from the forwarded
+            # email if that is configured, otherwise hand over to HA's reauth
+            # flow so the user can type the code.
+            raw = await self._async_resolve_two_factor(err)
         except WaterbeepAuthError as err:
             # Auth errors are not transient - surface as a reauth so HA prompts
             # the user rather than retrying forever.
@@ -120,6 +126,61 @@ class WaterbeepCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data.get(DATA_DAILY_SERIES) or [], today_iso
         )
         return data
+
+    async def _async_resolve_two_factor(
+        self, err: WaterbeepTwoFactorRequired
+    ) -> dict[str, Any]:
+        """Clear a 2FA challenge unattended, or escalate to HA's reauth flow.
+
+        Returns the dashboard payload fetched once the challenge is cleared.
+        Raises ``ConfigEntryAuthFailed`` when automatic retrieval is disabled or
+        does not work out — i.e. the pre-existing behaviour, so a broken inbox
+        degrades to "the user is asked for the code" rather than to no data.
+        """
+        mailbox = self._otp_mailbox
+        if mailbox is None:
+            raise ConfigEntryAuthFailed(
+                "Waterbeep requires two-factor verification"
+            ) from err
+
+        try:
+            await self._async_clear_challenge(mailbox, err.contacts)
+            return await self.client.async_get_data()
+        except (WaterbeepError, OtpMailboxError) as auto_err:
+            _LOGGER.warning(
+                "Automatic Waterbeep 2FA failed (%s); asking for the code instead",
+                auto_err,
+            )
+            raise ConfigEntryAuthFailed(
+                "Waterbeep requires two-factor verification"
+            ) from auto_err
+
+    async def _async_clear_challenge(
+        self, mailbox: ResendOtpMailbox, contacts: list[dict[str, str]]
+    ) -> None:
+        """Request the code by email, read it from the inbox and submit it.
+
+        The challenge was raised moments ago by this very poll, so its
+        server-side session is still alive — no ``async_refresh_challenge``
+        needed here (unlike the config flow, where the user's think time sits
+        between the login and the request).
+        """
+        contact = next((c for c in contacts if c.get("id") == "email"), None)
+        if contact is None:
+            raise WaterbeepAuthError("Waterbeep offers no email channel for the code")
+
+        # Capture the instant *before* asking, so only mail that arrives after
+        # this request can be accepted as the answer.
+        since = dt_util.utcnow()
+        await self.client.async_request_otp(contact["value"])
+        _LOGGER.debug("Waterbeep OTP requested by email; watching the Resend inbox")
+
+        code = await mailbox.async_wait_for_code(since)
+        if code is None:
+            raise WaterbeepAuthError("The one-time code did not reach the Resend inbox")
+
+        await self.client.async_submit_otp(code)
+        _LOGGER.info("Waterbeep 2FA cleared automatically from the forwarded email")
 
     async def _async_import_statistics(
         self, series: list[dict[str, Any]], today_iso: str

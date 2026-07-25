@@ -21,7 +21,8 @@ the API client, coordinator, or entities:
 
 | File | Purpose |
 |------|---------|
-| `api.py` | **All network logic.** Session, ASP.NET antiforgery, login, endpoint calls. |
+| `api.py` | **All Waterbeep network logic.** Session, ASP.NET antiforgery, login, endpoint calls. |
+| `otp_mailbox.py` | Optional unattended 2FA: reads the emailed one-time code from a Resend inbound mailbox (polls Resend's API, no webhook). Owns its own Resend HTTP calls. |
 | `coordinator.py` | `DataUpdateCoordinator`; normalises raw payloads into `self.data`. Twice-daily schedule. |
 | `statistics.py` | Imports each completed day as the `waterbeep:consumption` external statistic (Energy/Water dashboard source). |
 | `const.py` | `Final`-typed constants: config keys, entity suffixes, `coordinator.data` keys, `POLL_HOURS`. |
@@ -30,7 +31,7 @@ the API client, coordinator, or entities:
 
 ## Critical rules
 
-1. **All network logic in `api.py`.** The coordinator never talks HTTP directly.
+1. **All Waterbeep network logic in `api.py`** (Resend's in `otp_mailbox.py`). The coordinator never talks HTTP directly.
 2. **All state in the coordinator** — entities read `self.coordinator.data.get(...)`; return `None` for missing values.
 3. **The client owns its own cookie jar** — never the shared HA session — so the authenticated session is isolated.
 4. **Poll twice a day (01:00 / 13:00)** via `async_track_time_change` — no tight periodic loop. Stay low-profile against Waterbeep's servers.

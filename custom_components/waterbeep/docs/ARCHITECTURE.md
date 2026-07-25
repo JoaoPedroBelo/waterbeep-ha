@@ -15,13 +15,18 @@ graph TD
         SENS["sensor.py<br/>6 sensors"]
         BIN["binary_sensor.py<br/>availability"]
     end
-    API["api.py<br/>WaterbeepClient<br/>(all HTTP + auth)"]
+    API["api.py<br/>WaterbeepClient<br/>(all Waterbeep HTTP + auth)"]
+    OTP["otp_mailbox.py<br/>ResendOtpMailbox<br/>(optional 2FA code reader)"]
     WB["Aquamatrix SMSnet<br/>(ASP.NET Core)<br/>aquamatrix.pt/waterbeep"]
+    RS["Resend<br/>api.resend.com<br/>(inbound mailbox)"]
 
     CF -->|validate credentials| API
     INIT -->|create + schedule| COORD
     COORD -->|async_get_data| API
     API -->|HTTPS + private cookie jar| WB
+    COORD -->|"on 2FA: read the code"| OTP
+    CF -->|"on 2FA: read the code"| OTP
+    OTP -->|GET /emails/receiving| RS
     SENS -->|read self.data.get| COORD
     BIN -->|read self.data.get| COORD
 ```
@@ -55,7 +60,8 @@ sequenceDiagram
 
 | File | Purpose |
 |------|---------|
-| `api.py` | HTTP client: private session, antiforgery handling, login, endpoint calls. **All network logic lives here.** |
+| `api.py` | HTTP client: private session, antiforgery handling, login, endpoint calls. **All Waterbeep network logic lives here.** |
+| `otp_mailbox.py` | Optional: reads the emailed two-factor code back from a Resend inbound mailbox so a challenge clears unattended. Owns its own (Resend) HTTP calls. |
 | `coordinator.py` | `DataUpdateCoordinator`; normalises the four raw payloads into a flat `self.data`, then hands the daily series to `statistics.py`. |
 | `statistics.py` | Imports each completed day as a long-term **external statistic** (`waterbeep:consumption`) — the Energy/Water dashboard source. |
 | `const.py` | `Final`-typed constants: config keys, endpoints, entity suffixes, `coordinator.data` keys, `POLL_HOURS`. |
@@ -102,9 +108,60 @@ at the hours in `POLL_HOURS` (`01:00` / `13:00`) to stay low-profile against
 Waterbeep's servers. Readings arrive daily for the previous day, so more
 frequent polling would add no value.
 
+## Unattended two-factor (optional)
+
+Waterbeep uses **risk-based** 2FA: a login from an untrusted IP is challenged
+with a one-time code, which normally means the twice-daily poll stops and waits
+for a human to type it into HA's reauth prompt.
+
+When a Resend API key is configured, the coordinator instead clears the
+challenge itself: it asks Waterbeep to email the code, then reads it out of a
+Resend inbound mailbox the user forwards that email to. Everything is
+**pull-based** — Resend's `email.received` webhook is deliberately unused, so HA
+never has to be reachable from the internet.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as WaterbeepCoordinator
+    participant A as WaterbeepClient
+    participant W as Waterbeep
+    participant M as user mailbox<br/>(forwarding rule)
+    participant R as Resend inbound
+    participant O as ResendOtpMailbox
+
+    C->>A: async_get_data()
+    A->>W: login
+    W-->>A: 2FA challenge → WaterbeepTwoFactorRequired
+    alt no Resend key configured
+        C-->>C: ConfigEntryAuthFailed → HA asks the user
+    else key configured
+        Note over C: t0 = utcnow()
+        C->>A: async_request_otp(email channel)
+        A->>W: POST SubmitContact
+        W->>M: code email
+        M->>R: forwarded
+        loop every 5s, up to 180s
+            C->>O: async_wait_for_code(t0)
+            O->>R: GET /emails/receiving
+            O->>R: GET /emails/receiving/{id}
+        end
+        O-->>C: 6-digit code
+        C->>A: async_submit_otp(code)
+        A->>W: POST SubmitOTP → session trusted
+        C->>A: async_get_data() (retry)
+    end
+```
+
+Failure is always **degradation, never data loss**: a missing code, a silent
+inbox, a rejected API key or a Resend outage all fall back to the pre-existing
+`ConfigEntryAuthFailed` reauth prompt. Only mail newer than `t0` is accepted, so
+a previous attempt's code can never be replayed.
+
 ## Rules
 
-1. **All network logic in `api.py`.** The coordinator never talks HTTP directly.
+1. **All Waterbeep network logic in `api.py`**; Resend's lives in
+   `otp_mailbox.py`. The coordinator and entities never talk HTTP directly.
 2. **All state in the coordinator.** Entities only read `self.coordinator.data.get(...)`.
 3. **The client owns its own cookie jar** — never the shared HA session — so the
    authenticated session is isolated.

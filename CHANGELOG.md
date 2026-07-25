@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Added
+- **Optional unattended two-factor codes.** Waterbeep's risk-based 2FA used to
+  stop the twice-daily poll until someone typed the one-time code into the
+  reauth prompt. Configure a [Resend](https://resend.com) API key and forward
+  the Waterbeep code email to a Resend inbound address, and the integration now
+  requests the code by email, reads it back through Resend's *Received emails*
+  API, and clears the challenge itself — no prompt, no interaction.
+  - **Pull-based**: Home Assistant polls the Resend API, so it never needs to be
+    reachable from the internet (Resend's `email.received` webhook is unused).
+  - Only mail newer than the moment the code was requested is accepted, so an
+    earlier attempt's code can never be replayed; the wait is capped at 3 min.
+  - Every failure path (no email, rejected key, Resend outage, SMS-only
+    challenge) degrades to the existing "enter the code" prompt.
+  - Opt-in and reversible: the API key can be entered at setup or later via
+    **Configure**, and clearing it switches the feature back off. Optional
+    `from` / `to` filters narrow which inbound mail is considered.
+- An **options flow** (**Settings → Devices & Services → Waterbeep →
+  Configure**) for the settings above; changing them reloads the entry.
+
 ## [0.3.2]
 
 ### Fixed

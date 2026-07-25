@@ -5,17 +5,24 @@ two-factor auth: a login from an untrusted IP lands on a one-time-code
 challenge. When that happens the flow asks Waterbeep to send the code (SMS or
 email), then prompts the user to enter it. Completing the code re-trusts the
 connection, after which headless polling resumes.
+
+If the optional Resend inbox is configured (see ``otp_mailbox.py``), an
+email-delivered code is read from there automatically and the manual prompt is
+skipped; the prompt remains as the fallback whenever that does not pan out.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 from typing import Any
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 import voluptuous as vol
 
 from .api import (
@@ -25,7 +32,15 @@ from .api import (
     WaterbeepError,
     WaterbeepTwoFactorRequired,
 )
-from .const import CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .const import (
+    CONF_OTP_FROM_FILTER,
+    CONF_OTP_RESEND_API_KEY,
+    CONF_OTP_TO_FILTER,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DOMAIN,
+)
+from .otp_mailbox import OtpMailboxError, async_create_mailbox
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +48,18 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
+        # Opt-in: enables automatic two-factor codes from the very first
+        # challenge, which a new installation almost always faces.
+        vol.Optional(CONF_OTP_RESEND_API_KEY): str,
     }
+)
+
+# Editable after setup; the API key is repeated here so it can be added,
+# rotated, or cleared without removing the integration.
+OPTIONS_KEYS = (
+    CONF_OTP_RESEND_API_KEY,
+    CONF_OTP_FROM_FILTER,
+    CONF_OTP_TO_FILTER,
 )
 
 # Human-readable labels for the parsed 2FA delivery channels, keyed by the
@@ -50,6 +76,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Waterbeep."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlowHandler:
+        """Expose the automatic-2FA settings for editing after setup."""
+        return OptionsFlowHandler(config_entry)
 
     def __init__(self) -> None:
         """Initialise transient flow state."""
@@ -136,12 +168,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None and self._client is not None:
+            contact = user_input["contact"]
             try:
                 # The challenge captured when this flow was created may have
                 # expired while the user picked a channel; re-issue it so the
                 # OTP request posts against a live session (else Waterbeep 500s).
                 await self._client.async_refresh_challenge()
-                await self._client.async_request_otp(user_input["contact"])
+                # Capture the instant *before* asking, so only mail that arrives
+                # after this request can be accepted as the answer.
+                requested_at = dt_util.utcnow()
+                await self._client.async_request_otp(contact)
             except WaterbeepConnectionError as err:
                 _LOGGER.warning(
                     "Waterbeep OTP request could not reach service: %s", err
@@ -151,7 +187,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.warning("Waterbeep refused to send the OTP: %s", err)
                 errors["base"] = "otp_send_failed"
             else:
-                return await self.async_step_otp()
+                # Pre-fill the code from the forwarded email when possible; the
+                # OTP step still validates it and re-prompts if it is refused.
+                code = await self._async_read_emailed_code(contact, requested_at)
+                if code is None:
+                    return await self.async_step_otp()
+                return await self.async_step_otp({"code": code})
 
         options = {c["value"]: _contact_label(c) for c in self._contacts}
         default = next(iter(options), None)
@@ -188,6 +229,52 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required("code"): str}),
             errors=errors,
         )
+
+    async def _async_read_emailed_code(
+        self, contact_value: str, requested_at: datetime
+    ) -> str | None:
+        """Read the emailed code from the Resend inbox, if that is configured.
+
+        Returns ``None`` whenever the feature is off, the code went to SMS, or
+        the inbox does not produce one in time — every case falling through to
+        the manual prompt.
+        """
+        if not self._is_email_contact(contact_value):
+            return None
+        mailbox = async_create_mailbox(self.hass, self._merged_config())
+        if mailbox is None:
+            return None
+        try:
+            code = await mailbox.async_wait_for_code(requested_at)
+        except OtpMailboxError as err:
+            _LOGGER.warning("Could not read the Waterbeep code from Resend: %s", err)
+            return None
+        if code is None:
+            _LOGGER.warning(
+                "No Waterbeep code arrived in the Resend inbox; asking for it instead"
+            )
+        return code
+
+    def _is_email_contact(self, contact_value: str) -> bool:
+        """Check whether the picked delivery channel is the email one."""
+        return any(
+            c.get("value") == contact_value and c.get("id") == "email"
+            for c in self._contacts
+        )
+
+    def _merged_config(self) -> dict[str, Any]:
+        """Merge the settings in play: stored entry, its options, then this flow.
+
+        During initial setup only the flow's own input exists; on reauth the
+        entry (and anything set through the options flow) provides the Resend
+        credentials.
+        """
+        config: dict[str, Any] = {}
+        if self._reauth_entry is not None:
+            config.update(self._reauth_entry.data)
+            config.update(self._reauth_entry.options)
+        config.update(self._creds)
+        return config
 
     async def _attempt_login(self, errors: dict[str, str]) -> FlowResult | None:
         """Run a login. Returns a flow result, or ``None`` after setting errors.
@@ -243,6 +330,47 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._client is not None:
             await self._client.close()
             self._client = None
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Edit the optional automatic two-factor (Resend inbox) settings.
+
+    Options are merged over entry data at setup, so clearing the API key here
+    switches automatic retrieval back off even if a key was entered at setup.
+    """
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Keep the entry under a private name.
+
+        Assigning ``self.config_entry`` is deprecated in newer Home Assistant
+        cores (it became a managed property), so this stays compatible with both.
+        """
+        self._entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show and store the automatic-2FA settings."""
+        if user_input is not None:
+            # Empty strings are kept, not dropped: an empty value has to be able
+            # to override a setting stored in the entry data.
+            return self.async_create_entry(
+                title="",
+                data={
+                    key: str(user_input.get(key, "")).strip() for key in OPTIONS_KEYS
+                },
+            )
+
+        current = {**self._entry.data, **self._entry.options}
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(key, default=current.get(key, "")): str
+                    for key in OPTIONS_KEYS
+                }
+            ),
+        )
 
 
 class InvalidAuth(HomeAssistantError):

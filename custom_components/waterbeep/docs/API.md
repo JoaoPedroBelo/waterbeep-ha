@@ -42,6 +42,81 @@ sequenceDiagram
     end
 ```
 
+## Two-factor endpoints (verified live)
+
+A login from an untrusted IP lands on `TwoFactorAuth` instead of the dashboard.
+The page carries a hidden `Token` + `EntityCode` and one `ContactType` radio per
+delivery channel (`email` / `phone`); both AJAX calls below need the page's
+`__RequestVerificationToken` too (omitting it yields HTTP 400).
+
+| Endpoint | Body | Returns |
+|----------|------|---------|
+| `Account/SubmitContact` | `Token`, `EntityCode`, `ContactType` | `{"succeeded": bool}` — sends the code |
+| `Account/SubmitOTP` | `Token`, `EntityCode`, `OTPCode` | `{"succeeded": bool}` — trusts the session/IP |
+
+The challenge is bound to the server's `.AspNetCore.Session` cookie, which
+expires while a user is choosing a channel — hence `async_refresh_challenge()`
+re-runs the login immediately before `SubmitContact` (otherwise HTTP 500).
+
+## Reading the emailed code back (optional, Resend)
+
+`otp_mailbox.py` can complete the challenge without a human by reading the code
+out of a [Resend](https://resend.com) inbound mailbox the user forwards the
+Waterbeep code email to. This uses Resend's **public, documented** API — two
+`GET`s, `Authorization: Bearer re_...`, base `https://api.resend.com`:
+
+| Endpoint | Purpose | Relevant fields |
+|----------|---------|-----------------|
+| `GET /emails/receiving?limit=20` | recent inbound mail, **metadata only** | `id`, `from`, `to`, `subject`, `created_at` |
+| `GET /emails/receiving/{id}` | one message in full | `subject`, `text`, `html`, `headers` |
+
+```json
+{"object": "list", "has_more": false, "data": [
+  {"id": "a39999a6-…", "from": "noreply@aquamatrix.pt",
+   "to": ["waterbeep@inbound.example.pt"], "subject": "…",
+   "created_at": "2026-07-25T14:37:40.951Z"}
+]}
+```
+
+The code email itself, captured live (HTML-only body, no `text` part):
+
+```text
+From:    noreply.epal@aquamatrix.pt
+Subject: Autenticação em Waterbeep
+
+Autenticação em Waterbeep. Código de segurança: 123456.
+EPAL - Empresa Portuguesa das Águas Livres, S.A.
+```
+
+(Code replaced with a placeholder; the wording is verbatim.)
+
+So the keyword pass (`código` … 6 digits) is what matches in practice; the bare
+fallback exists only for the day EPAL rewords the mail.
+
+**The `from` of the inbound mail is the forwarder, not EPAL.** Verified: a mail
+forwarded by hand arrives as `from: <your-address>` with subject `Fwd: …`, and
+`noreply.epal@aquamatrix.pt` appears only inside the quoted body. Gmail's
+*automatic* forwarding normally preserves the original sender, but because it
+depends on the provider the `from` filter defaults to empty — setting it to
+`aquamatrix.pt` will silently break a hand-forwarded or rewritten mail.
+
+Notes on the implementation:
+
+- **Polling, not webhooks.** Resend's `email.received` webhook would require HA
+  to be reachable from the internet; the list endpoint keeps this cloud-polling.
+- Resend does not document the list order, so entries are sorted by `created_at`
+  locally and the newest is read first.
+- Only mail newer than the moment the code was requested (minus 60 s of clock
+  skew) is eligible, so an earlier attempt's code cannot be replayed.
+- The code is matched keyword-first (`código`/`code`/`OTP`/`PIN`/`verifica…`
+  followed by 6 digits) across `subject` → `text` → tag-stripped `html`, falling
+  back to a standalone 6-digit group. `<style>`/`<script>` blocks are dropped
+  before scanning so CSS values are never mistaken for a code.
+- Inspected message IDs are remembered, so repeated polls only fetch new mail.
+
+> The Resend API key is stored in the config entry like the password, is never
+> logged, and clearing it in the options flow disables the feature.
+
 ## Endpoints (all POST, verified live)
 
 | Endpoint | Body | Returns |

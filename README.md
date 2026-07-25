@@ -17,6 +17,7 @@ A Home Assistant custom integration for the **Aquamatrix Waterbeep** water-telem
 - **💧 Consumption Monitoring**: Daily, 7-day, 30-day and monthly water consumption (m³) + per-capita average
 - **📊 Water Dashboard Ready**: A `total_increasing` cumulative sensor built for the Home Assistant Water dashboard
 - **🕐 Low-Profile Polling**: Queries the service only twice a day (01:00 & 13:00) — no tight loops
+- **🔐 Unattended 2FA** *(optional)*: forward the code email to a Resend inbound address and the integration reads the one-time code itself
 - **☁️ Cloud Polling**: Authenticates and pulls dashboard data automatically
 - **🇬🇧🇵🇹 Localised**: English and Portuguese translations included
 
@@ -41,8 +42,42 @@ A Home Assistant custom integration for the **Aquamatrix Waterbeep** water-telem
 4. Enter your configuration:
    - **NIF**: Your NIF (this is your Waterbeep account User Code)
    - **Password**: Your Waterbeep account password
+   - **Resend API key** *(optional)*: enables automatic two-factor codes — see below
 
 The integration validates your credentials with a live login before creating the entry, then refreshes automatically **twice a day (01:00 and 13:00 local time)**.
+
+### Automatic two-factor codes (optional)
+
+Waterbeep uses **risk-based** two-factor auth: a login from an untrusted IP is challenged with a one-time code, which normally stops polling until you type that code into Home Assistant.
+
+You can make this unattended. Waterbeep can send the code by **email**, so forward that email to a [Resend](https://resend.com) inbound address and Home Assistant will read the code from there and clear the challenge on its own.
+
+```text
+Waterbeep ──(code email)──▶ your mailbox ──(forwarding rule)──▶ Resend inbound
+                                                                     │
+                        Home Assistant polls the Resend API ◀─────────┘
+```
+
+**Setup**
+
+1. In Resend, add a domain and enable **Inbound** for it, giving you an address such as `waterbeep@inbound.example.pt`. Create an **API key** with read access.
+2. In your email provider, add a rule that forwards the Waterbeep code email to that address. Keep it narrow — match the Waterbeep sender or subject, not everything.
+3. Paste the API key into the integration: at setup, or afterwards via **Settings → Devices & Services → Waterbeep → Configure**.
+4. Optionally narrow what is accepted, in the same **Configure** dialog:
+   - **Only accept mail from** — e.g. `aquamatrix.pt`
+   - **Only accept mail sent to** — e.g. `waterbeep@inbound.example.pt`
+
+   Both are matched as case-insensitive substrings. Leave them empty when the Resend inbox is dedicated to this integration — **which is the recommended setup**.
+
+   ⚠️ Careful with **Only accept mail from**: the sender of the mail that reaches Resend is often the *forwarder*, not EPAL. A hand-forwarded message arrives as `from: <your own address>` with `noreply.epal@aquamatrix.pt` only inside the quoted body, so a filter on `aquamatrix.pt` would reject it.
+
+**Good to know**
+
+- Home Assistant **polls** the Resend API — it does not need to be reachable from the internet, and no webhook is configured.
+- Only mail that arrives *after* the code was requested is accepted, so an old code is never reused. The wait is capped at 3 minutes.
+- If anything goes wrong (no email, wrong key, Resend down), you simply get the normal "enter the code" prompt — nothing breaks.
+- Clear the API key to switch the feature off again.
+- Codes sent by **SMS** are untouched by this; pick the email channel to benefit.
 
 ## 📖 Documentation
 
