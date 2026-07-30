@@ -164,8 +164,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_contact(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Let the user pick where the one-time code is sent, then request it."""
+        """Let the user pick where the one-time code is sent, then request it.
+
+        With the Resend inbox configured the email channel is picked here without
+        showing the form at all: a reauth triggered by a failed poll is exactly
+        the case that has to complete unattended, and showing a picker first
+        would still demand a click.
+        """
         errors: dict[str, str] = {}
+
+        if user_input is None:
+            user_input = self._auto_contact()
 
         if user_input is not None and self._client is not None:
             contact = user_input["contact"]
@@ -229,6 +238,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required("code"): str}),
             errors=errors,
         )
+
+    def _auto_contact(self) -> dict[str, Any] | None:
+        """Pick the email channel unprompted when the inbox can answer it.
+
+        Returns ``None`` — leaving the picker to the user — when automatic
+        retrieval is off or Waterbeep is not offering an email channel.
+        """
+        email = next((c for c in self._contacts if c.get("id") == "email"), None)
+        if email is None:
+            return None
+        if async_create_mailbox(self.hass, self._merged_config()) is None:
+            return None
+        _LOGGER.debug("Requesting the Waterbeep code by email without prompting")
+        return {"contact": email["value"]}
 
     async def _async_read_emailed_code(
         self, contact_value: str, requested_at: datetime

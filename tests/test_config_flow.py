@@ -204,19 +204,83 @@ async def test_emailed_code_is_read_automatically(hass: HomeAssistant) -> None:
             return_value=mailbox,
         ),
     ):
-        await flow.async_step_user({**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"})
-        # Picking the email channel completes the whole challenge in one step.
-        result = await flow.async_step_contact({"contact": "EmailVal"})
+        # One call: the challenge is raised, the email channel picked, the code
+        # read and submitted, and the entry created — no step faces the user.
+        result = await flow.async_step_user(
+            {**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"}
+        )
 
+    instance.async_request_otp.assert_awaited_once_with("EmailVal")
     instance.async_submit_otp.assert_awaited_once_with("123456")
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_OTP_RESEND_API_KEY] == "re_abc"
 
 
-async def test_sms_channel_never_touches_the_inbox(hass: HomeAssistant) -> None:
-    """A code sent by SMS is not going to show up in the Resend inbox."""
+async def test_reauth_completes_without_any_prompt(hass: HomeAssistant) -> None:
+    """A reauth from a failed poll must finish with nobody clicking anything.
+
+    Regression: the contact picker used to be shown first, so an unattended
+    reauth stalled on "choose where to send the code" — the exact case the
+    feature exists to avoid.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"},
+        unique_id="12345678",
+    )
+    entry.add_to_hass(hass)
+
+    flow = ConfigFlow()
+    flow.hass = hass
+    flow.context = {"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id}
+
+    instance = _mock_2fa_client()
+    mailbox = AsyncMock()
+    mailbox.async_wait_for_code = AsyncMock(return_value="123456")
+
+    with (
+        patch(
+            "custom_components.waterbeep.config_flow.WaterbeepClient",
+            return_value=instance,
+        ),
+        patch(
+            "custom_components.waterbeep.config_flow.async_create_mailbox",
+            return_value=mailbox,
+        ),
+        patch.object(hass.config_entries, "async_reload", AsyncMock(return_value=True)),
+    ):
+        result = await flow.async_step_reauth(dict(entry.data))
+
+    # The email channel was chosen for us, the code read, and the reauth closed.
+    instance.async_request_otp.assert_awaited_once_with("EmailVal")
+    instance.async_submit_otp.assert_awaited_once_with("123456")
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+
+
+async def test_contact_form_still_shown_without_a_mailbox(hass: HomeAssistant) -> None:
+    """With the feature off the user is still asked where to send the code."""
     flow = _make_flow(hass)
     instance = _mock_2fa_client()
+
+    with patch(
+        "custom_components.waterbeep.config_flow.WaterbeepClient",
+        return_value=instance,
+    ):
+        result = await flow.async_step_user(USER_INPUT)
+
+    assert result["step_id"] == "contact"
+    instance.async_request_otp.assert_not_awaited()
+
+
+async def test_sms_only_challenge_still_shows_the_picker(hass: HomeAssistant) -> None:
+    """No email channel means there is nothing the inbox could answer."""
+    flow = _make_flow(hass)
+    instance = AsyncMock()
+    instance.async_login = AsyncMock(
+        side_effect=WaterbeepTwoFactorRequired([{"id": "phone", "value": "PhoneVal"}])
+    )
+    instance.close = AsyncMock()
     mailbox = AsyncMock()
 
     with (
@@ -229,7 +293,29 @@ async def test_sms_channel_never_touches_the_inbox(hass: HomeAssistant) -> None:
             return_value=mailbox,
         ),
     ):
-        await flow.async_step_user({**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"})
+        result = await flow.async_step_user(
+            {**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"}
+        )
+
+    assert result["step_id"] == "contact"
+    instance.async_request_otp.assert_not_awaited()
+
+
+async def test_sms_channel_never_touches_the_inbox(hass: HomeAssistant) -> None:
+    """A code sent by SMS is not going to show up in the Resend inbox.
+
+    Only reachable by submitting the picker, so the pending challenge is set up
+    directly rather than through the (now self-completing) login step.
+    """
+    flow = _make_flow(hass)
+    flow._client = _mock_2fa_client()
+    flow._contacts = CONTACTS
+    mailbox = AsyncMock()
+
+    with patch(
+        "custom_components.waterbeep.config_flow.async_create_mailbox",
+        return_value=mailbox,
+    ):
         result = await flow.async_step_contact({"contact": "PhoneVal"})
 
     mailbox.async_wait_for_code.assert_not_awaited()
@@ -253,9 +339,12 @@ async def test_silent_inbox_falls_back_to_the_code_form(hass: HomeAssistant) -> 
             return_value=mailbox,
         ),
     ):
-        await flow.async_step_user({**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"})
-        result = await flow.async_step_contact({"contact": "EmailVal"})
+        result = await flow.async_step_user(
+            {**USER_INPUT, CONF_OTP_RESEND_API_KEY: "re_abc"}
+        )
 
+    # The code was requested by email, but nothing arrived — so ask for it.
+    instance.async_request_otp.assert_awaited_once_with("EmailVal")
     instance.async_submit_otp.assert_not_awaited()
     assert result["step_id"] == "otp"
 
