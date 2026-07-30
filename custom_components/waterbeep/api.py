@@ -190,8 +190,12 @@ class WaterbeepClient:
             raise WaterbeepAuthError(f"No __RequestVerificationToken found on {path}")
         return match.group(1) or match.group(2)
 
-    async def async_login(self) -> None:
-        """Authenticate against Waterbeep. Raises on failure."""
+    async def async_login(self, *, allow_retry: bool = True) -> None:
+        """Authenticate against Waterbeep. Raises on failure.
+
+        ``allow_retry`` guards the one-shot retry described in the rejection
+        branch below; the retry itself passes ``False`` so this can never loop.
+        """
         session = await self._ensure_session()
 
         # 1. Fetch the login page for a fresh antiforgery token + cookie.
@@ -239,6 +243,29 @@ class WaterbeepClient:
         # lands on /waterbeep/Dashboard/Modalities). A failed login re-renders
         # the login form (still on Account/Login).
         if "Account/Login" in final_url or LOGIN_PATH in final_url:
+            # A login re-rendering the form is *not* reliable evidence of bad
+            # credentials: stale cookies on the session make Waterbeep serve the
+            # plain login page instead of the two-factor challenge, and treating
+            # that as fatal hid the challenge the caller can actually resolve.
+            #
+            # Verified live on 2026-07-30: a poll was rejected here (with no 2FA
+            # markers in a 6156-byte body) and the retry below, with the cookie
+            # jar cleared, got the challenge and cleared it unattended.
+            _LOGGER.debug(
+                "Login re-rendered the form (url=%s, tfa_markers=%s, len=%s)",
+                final_url,
+                TWO_FACTOR_PATH in body or 'id="tfaForm"' in body,
+                len(body),
+            )
+            if allow_retry:
+                # Clear the cookies rather than the session: a stale antiforgery
+                # or ASP.NET session cookie is the plausible cause, and dropping
+                # the whole session would throw away the connection pool too.
+                _LOGGER.debug("Retrying the Waterbeep login once with fresh cookies")
+                session.cookie_jar.clear()
+                self._token = None
+                await self.async_login(allow_retry=False)
+                return
             raise WaterbeepAuthError("Login rejected - check UserCode and Password")
 
         # The landing page embeds the antiforgery token used as the body token

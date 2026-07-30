@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1]
+
+### Fixed
+- **The automatic 2FA of v0.4.0 never actually ran.** Two separate faults, both
+  confirmed against the live service:
+  - A login that re-renders the login form was treated as "wrong password", but
+    it is not: stale cookies make Waterbeep serve the plain login page instead
+    of the two-factor challenge. The poll therefore failed with
+    `Login rejected - check UserCode and Password` and never raised the
+    challenge the automatic path keys off — while the very same stored
+    credentials produced a challenge seconds later. The login is now retried
+    once with a cleared cookie jar before any auth failure is declared, and the
+    rejected response is logged (URL, 2FA markers, body length) so a future
+    variant is diagnosable.
+  - The reauth path still demanded a click. The "where should the code be sent"
+    picker was shown *before* any attempt to read the inbox, so a reauth
+    triggered by a failed poll — exactly the case that has to complete
+    unattended — stalled waiting for a human. With the Resend inbox configured
+    and an email channel on offer, that channel is now chosen without a prompt;
+    the picker still appears when the feature is off or only SMS is available.
+
+  Verified end to end in production: challenge → code requested by email → read
+  from the Resend inbox → submitted → poll resumed, in 11 seconds, no
+  interaction.
+
 ## [0.4.0]
 
 ### Added

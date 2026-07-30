@@ -75,6 +75,16 @@ class _FakeResponse:
             raise AssertionError("unexpected error status in test")
 
 
+class _FakeCookieJar:
+    """Records clears, so the login retry's fresh handshake is observable."""
+
+    def __init__(self) -> None:
+        self.clears = 0
+
+    def clear(self) -> None:
+        self.clears += 1
+
+
 class _FakeSession:
     """Serves queued ``_FakeResponse`` objects in call order per HTTP method."""
 
@@ -82,6 +92,7 @@ class _FakeSession:
         self._gets = list(gets)
         self._posts = list(posts)
         self.closed = False
+        self.cookie_jar = _FakeCookieJar()
         # Records ``(url, data, headers)`` for every POST so tests can assert
         # what was actually sent on the wire.
         self.post_calls: list[tuple[str, dict | None, dict | None]] = []
@@ -156,6 +167,68 @@ class TestTwoFactorParsing:
             {"id": "email", "value": "EmailVal"},
             {"id": "phone", "value": "PhoneVal"},
         ]
+
+
+class TestRejectedLoginRetry:
+    """A login that re-renders the form is retried once before giving up.
+
+    Observed live on 2026-07-30: a poll was rejected here and, four seconds
+    later, the very same stored credentials produced a two-factor challenge — so
+    a single rejection is not evidence of bad credentials, and treating it as
+    fatal hid the challenge the caller can actually resolve.
+    """
+
+    async def test_retry_surfaces_the_two_factor_challenge(self):
+        """The retry reaches the challenge the first attempt failed to show."""
+        client = _client_with(
+            gets=[_FakeResponse(text=LOGIN_PAGE), _FakeResponse(text=LOGIN_PAGE)],
+            posts=[
+                # First attempt: re-renders the login form (spurious rejection).
+                _FakeResponse(text=LOGIN_PAGE, url="https://x/Account/Login"),
+                # Retry: the challenge the caller can act on.
+                _FakeResponse(text=TFA_PAGE, url="https://x/Account/TwoFactorAuth"),
+            ],
+        )
+
+        with pytest.raises(WaterbeepTwoFactorRequired) as excinfo:
+            await client.async_login()
+
+        assert [c["id"] for c in excinfo.value.contacts] == ["email", "phone"]
+        assert client._session.cookie_jar.clears == 1
+
+    async def test_retry_can_still_succeed(self):
+        """A rejection followed by a clean login logs in normally."""
+        client = _client_with(
+            gets=[_FakeResponse(text=LOGIN_PAGE), _FakeResponse(text=LOGIN_PAGE)],
+            posts=[
+                _FakeResponse(text=LOGIN_PAGE, url="https://x/Account/Login"),
+                _FakeResponse(
+                    text=DASHBOARD_PAGE, url="https://x/Dashboard/Modalities"
+                ),
+            ],
+        )
+
+        await client.async_login()
+
+        assert client._logged_in is True
+        assert client._token == "AJAX_TOK"
+
+    async def test_two_rejections_still_fail(self):
+        """Genuinely bad credentials fail after exactly one retry, not a loop."""
+        client = _client_with(
+            gets=[_FakeResponse(text=LOGIN_PAGE), _FakeResponse(text=LOGIN_PAGE)],
+            posts=[
+                _FakeResponse(text=LOGIN_PAGE, url="https://x/Account/Login"),
+                _FakeResponse(text=LOGIN_PAGE, url="https://x/Account/Login"),
+            ],
+        )
+
+        with pytest.raises(WaterbeepAuthError, match="Login rejected"):
+            await client.async_login()
+
+        # Two attempts total: no queued response left over, none demanded extra.
+        assert len(client._session.post_calls) == 2
+        assert client._logged_in is False
 
 
 class TestTwoFactorFlow:
