@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2]
+
+### Security
+- **The account User Code (a Portuguese NIF) is no longer written to the logs in
+  full.** The four `debug`-level login/2FA messages now mask it to the last three
+  digits, so enabling debug logging or sharing a log to get support no longer
+  exposes the identifier.
+
+### Fixed
+- **Documentation described entities the integration does not ship.** The README,
+  `docs/ARCHITECTURE.md` and `info.md` claimed a sixth `total_increasing` "Total
+  Consumption" sensor and, in `info.md`, litre units and an hourly interval. The
+  integration ships five sensors (none `total_increasing`) and feeds the
+  Energy/Water dashboard through the `waterbeep:consumption` external statistic;
+  the docs now match.
+
+### Changed
+- **`hacs.json`**: added `"country": "PT"` (the integration only serves
+  Aquamatrix/EPAL customers in Portugal) and raised the Home Assistant floor to
+  `2026.3.0`, the first version that reads the in-tree `brand/` images.
+- Removed the duplicate `custom_components/waterbeep/hacs.json`, which was
+  installed into the component directory but never read.
+
 ## [0.4.1]
 
 ### Fixed
