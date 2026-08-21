@@ -5,9 +5,10 @@ telemetry service (EPAL meters) in Home Assistant.
 
 ## Features
 
-- **Daily consumption** and **7-day consumption** sensors (litres)
-- **Cloud polling** — signs into your Waterbeep account and reads the dashboard
-- Configurable update interval (default: hourly)
+- **Consumption sensors** — daily, 7-day, 30-day and monthly water use (m³), plus a per-capita average
+- **Energy/Water dashboard ready** — each completed day is imported as the `waterbeep:consumption` external statistic
+- **Cloud polling** — signs into your Waterbeep account and reads the dashboard twice a day (01:00 & 13:00)
+- **Unattended 2FA** *(optional)* — reads the one-time code from a Resend inbound mailbox
 - English 🇬🇧 and Portuguese 🇵🇹 translations
 
 ## Quick Start
@@ -18,8 +19,8 @@ telemetry service (EPAL meters) in Home Assistant.
 
 ## Status
 
-Early alpha. More sensors (meter index, 30-day, per-person, billing, leak
-alerts) will be added as the corresponding dashboard endpoints are mapped.
+Beta. Additional data (billing, leak alerts) will be added as the corresponding
+dashboard endpoints are mapped.
 
 ## Author
 

@@ -15,7 +15,7 @@ A Home Assistant custom integration for the **Aquamatrix Waterbeep** water-telem
 ## ✨ Features
 
 - **💧 Consumption Monitoring**: Daily, 7-day, 30-day and monthly water consumption (m³) + per-capita average
-- **📊 Water Dashboard Ready**: A `total_increasing` cumulative sensor built for the Home Assistant Water dashboard
+- **📊 Water Dashboard Ready**: Each completed day is imported as the `waterbeep:consumption` external statistic, which the Home Assistant Energy/Water dashboard reads directly
 - **🕐 Low-Profile Polling**: Queries the service only twice a day (01:00 & 13:00) — no tight loops
 - **🔐 Unattended 2FA** *(optional)*: forward the code email to a Resend inbound address and the integration reads the one-time code itself
 - **☁️ Cloud Polling**: Authenticates and pulls dashboard data automatically
@@ -88,8 +88,7 @@ Comprehensive documentation is available in the [`docs`](custom_components/water
 
 ## 🎯 Entities
 
-### Sensors (6)
-- **Total Consumption** (m³, `total_increasing`) — cumulative accumulator, the entity to add to the **Water dashboard**
+### Sensors (5)
 - **Daily Consumption** (m³) — most recent complete day (daily series in attributes)
 - **7-Day Consumption** (m³) — total over the last 7 days
 - **30-Day Consumption** (m³) — total over the last 30 days
@@ -100,9 +99,9 @@ Comprehensive documentation is available in the [`docs`](custom_components/water
 - Service Available (ON when the last poll succeeded — disabled by default)
 
 > Waterbeep exposes only per-period consumption (no lifetime meter index), so the
-> **Total Consumption** sensor synthesises a monotonic cumulative value by adding
-> each completed day exactly once, persisted across restarts. This is what makes it
-> valid for the Home Assistant Water dashboard.
+> integration does not ship a `total_increasing` sensor. Instead, each completed
+> day is imported once as the `waterbeep:consumption` **external statistic**, which
+> the Home Assistant Energy/Water dashboard reads directly.
 
 ## 🏗️ Example Automations
 

@@ -106,6 +106,16 @@ def _scrape_contacts(html: str) -> list[dict[str, str]]:
     return contacts
 
 
+def _mask_user_code(user_code: str) -> str:
+    """Mask a User Code (a Portuguese NIF) for logging, keeping only the last 3.
+
+    The value is personal data, so it must never reach the logs in full — even
+    at debug level, where users routinely share output to get support.
+    """
+    tail = user_code[-3:]
+    return f"{'*' * max(len(user_code) - 3, 0)}{tail}"
+
+
 class WaterbeepError(Exception):
     """Base error for the Waterbeep client."""
 
@@ -236,7 +246,9 @@ class WaterbeepClient:
             # like the rest of the site; capture the page's token to send with
             # them (missing it yields HTTP 400).
             self._tfa_antiforgery = _scrape_hidden(body, "__RequestVerificationToken")
-            _LOGGER.debug("Waterbeep requires 2FA for %s", self._user_code)
+            _LOGGER.debug(
+                "Waterbeep requires 2FA for %s", _mask_user_code(self._user_code)
+            )
             raise WaterbeepTwoFactorRequired(contacts)
 
         # A successful login redirects away from the login page (verified: it
@@ -277,7 +289,9 @@ class WaterbeepClient:
             )
         self._token = match.group(1) or match.group(2)
         self._logged_in = True
-        _LOGGER.debug("Waterbeep login successful for %s", self._user_code)
+        _LOGGER.debug(
+            "Waterbeep login successful for %s", _mask_user_code(self._user_code)
+        )
 
     async def _post_2fa(self, path: str, payload: dict[str, str]) -> dict[str, Any]:
         """POST a 2FA handshake endpoint (SubmitContact/SubmitOTP) and return JSON.
@@ -331,7 +345,10 @@ class WaterbeepClient:
         except WaterbeepTwoFactorRequired:
             # Expected path: the login refreshed the pending challenge (fresh
             # session cookies + Token/EntityCode) as a side effect.
-            _LOGGER.debug("Waterbeep 2FA challenge refreshed for %s", self._user_code)
+            _LOGGER.debug(
+                "Waterbeep 2FA challenge refreshed for %s",
+                _mask_user_code(self._user_code),
+            )
 
     async def async_request_otp(self, contact_value: str) -> None:
         """Ask Waterbeep to send the OTP to the chosen delivery channel.
@@ -375,7 +392,7 @@ class WaterbeepClient:
         self._tfa_antiforgery = None
         self._token = await self._get_verification_token(DASHBOARD_LANDING)
         self._logged_in = True
-        _LOGGER.debug("Waterbeep 2FA cleared for %s", self._user_code)
+        _LOGGER.debug("Waterbeep 2FA cleared for %s", _mask_user_code(self._user_code))
 
     async def _post_endpoint(
         self, path: str, extra: dict[str, str] | None = None

@@ -12,7 +12,7 @@ graph TD
         CF["config_flow.py<br/>(live-login validation)"]
         INIT["__init__.py<br/>(entry setup / unload)"]
         COORD["coordinator.py<br/>WaterbeepCoordinator<br/>normalises → self.data"]
-        SENS["sensor.py<br/>6 sensors"]
+        SENS["sensor.py<br/>5 sensors"]
         BIN["binary_sensor.py<br/>availability"]
     end
     API["api.py<br/>WaterbeepClient<br/>(all Waterbeep HTTP + auth)"]
