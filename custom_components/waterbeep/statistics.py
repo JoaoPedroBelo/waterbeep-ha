@@ -88,12 +88,14 @@ async def async_import_consumption_statistics(
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.models import (
         StatisticData,
+        StatisticMeanType,
         StatisticMetaData,
     )
     from homeassistant.components.recorder.statistics import (
         async_add_external_statistics,
         get_last_statistics,
     )
+    from homeassistant.util.unit_conversion import VolumeConverter
 
     if not series:
         return
@@ -128,11 +130,12 @@ async def async_import_consumption_statistics(
         for p in points
     ]
     metadata: StatisticMetaData = {
-        "has_mean": False,
         "has_sum": True,
+        "mean_type": StatisticMeanType.NONE,
         "name": STATISTIC_NAME,
         "source": DOMAIN,
         "statistic_id": STATISTIC_ID,
+        "unit_class": VolumeConverter.UNIT_CLASS,
         "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
     }
     async_add_external_statistics(hass, metadata, statistics)
