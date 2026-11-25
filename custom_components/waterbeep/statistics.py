@@ -95,6 +95,22 @@ async def async_import_consumption_statistics(
         get_last_statistics,
     )
 
+    # Home Assistant 2025.11 replaced `has_mean` with `mean_type` and added
+    # `unit_class`, and `has_mean` becomes an error in a later release
+    # (home-assistant/core#193148). Both symbols are absent on older supported
+    # versions (down to the 2024.3 floor), so feature-detect them and fall back
+    # to `has_mean` instead of hard-importing and breaking old installs.
+    try:
+        from homeassistant.components.recorder.models import StatisticMeanType
+        from homeassistant.util.unit_conversion import VolumeConverter
+
+        mean_metadata = {
+            "mean_type": StatisticMeanType.NONE,
+            "unit_class": VolumeConverter.UNIT_CLASS,
+        }
+    except ImportError:
+        mean_metadata = {"has_mean": False}
+
     if not series:
         return
 
@@ -128,12 +144,12 @@ async def async_import_consumption_statistics(
         for p in points
     ]
     metadata: StatisticMetaData = {
-        "has_mean": False,
         "has_sum": True,
         "name": STATISTIC_NAME,
         "source": DOMAIN,
         "statistic_id": STATISTIC_ID,
         "unit_of_measurement": UnitOfVolume.CUBIC_METERS,
+        **mean_metadata,  # type: ignore[typeddict-item]
     }
     async_add_external_statistics(hass, metadata, statistics)
     _LOGGER.debug(
